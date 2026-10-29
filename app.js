@@ -13,7 +13,7 @@
 // Create a Firebase project, enable Realtime Database, and paste its web config
 // here. Never put private server credentials in a browser-based application.
 // ---------------------------------------------------------------------------
-const firebaseConfig = {
+const FIREBASE_CONFIG = {
   apiKey: "AIzaSyA4G46NAn-RFWz0l6sx-o2eR3ZeUkKjtMg",
   authDomain: "kolonisten-df6cb.firebaseapp.com",
   databaseURL: "https://kolonisten-df6cb-default-rtdb.europe-west1.firebasedatabase.app",
