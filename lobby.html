@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Colonists — Lobby</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <div class="brand">⚓ <span>COLONISTS</span></div>
+      <div class="sub">Trade, build, expand — a multiplayer island game</div>
+    </div>
+    <span class="muted small">LOBBY</span>
+  </header>
+ <section class="panel setup" id="setup">
+   <h2>
+    Start a colony
+   </h2>
+   <p class="muted">
+    Create a room and share its code, or join a friend's room. 2–4 players.
+   </p>
+   <div class="setupgrid">
+    <label class="full">
+     Your name
+     <input id="nameInput" maxlength="18" placeholder="e.g. Ray" value="Colonist"/>
+    </label>
+    <button id="createBtn">
+     Create room
+    </button>
+    <div>
+     <label class="small muted">
+      Room code
+     </label>
+     <input id="codeInput" maxlength="6" placeholder="AB12CD" style="text-transform:uppercase"/>
+    </div>
+    <button id="joinBtn">
+     Join room
+    </button>
+    <button id="soloBtn">
+     Play local demo
+    </button>
+    <div class="full muted small">
+     Online multiplayer needs a Firebase Realtime Database project. Paste its web config in the code's FIREBASE_CONFIG object. Local demo works without setup, on this browser only.
+    </div>
+   </div>
+   <div class="notice hidden" id="setupMsg">
+   </div>
+  </section>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Colonists — Game</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <div class="brand">⚓ <span>COLONISTS</span></div>
+      <div class="sub">Trade, build, expand — a multiplayer island game</div>
+    </div>
+    <div class="row">
+      <span class="muted small" id="roomBadge">Connecting…</span>
+      <button id="leaveBtn">Leave room</button>
+    </div>
+  </header>
+ <main id="game">
+   <section id="gameArea">
+    <!-- Turn controls and the color-coded action banner -->
+    <div class="turnbar">
+     <div>
+      <b id="roomTitle">
+       Room
+      </b>
+      <div class="muted small" id="turnText">
+       Waiting for players…
+      </div>
+     </div>
+     <div class="row">
+      <span class="dice" id="diceDisplay">
+       🎲 —
+      </span>
+      <button class="hidden" id="startPlacementBtn">
+       Start placements
+      </button>
+      <button id="rollBtn">
+       Roll dice
+      </button>
+      <button disabled="" id="endBtn">
+       End turn →
+      </button>
+     </div>
+    </div>
+    <div aria-live="polite" class="game-notice hidden" id="gameNotice" role="status">
+    </div>
+    <div class="boardwrap">
+     <svg aria-label="Colonists game board" id="board" viewbox="0 0 760 610">
+     </svg>
+    </div>
+    <div class="row" style="margin-top:10px">
+     <span class="muted small">
+      Build mode:
+     </span>
+     <button class="modeBtn" data-mode="select">
+      Select
+     </button>
+     <button class="modeBtn" data-mode="road">
+      Road
+      <span class="cost">
+       🪵1 🧱1
+      </span>
+     </button>
+     <button class="modeBtn" data-mode="settlement">
+      Settlement
+      <span class="cost">
+       🪵1 🧱1 🌾1 🐑1
+      </span>
+     </button>
+     <button class="modeBtn" data-mode="city">
+      City
+      <span class="cost">
+       🪨3 🌾2
+      </span>
+     </button>
+     <button class="modeBtn" data-mode="port">
+      Port
+      <span class="cost">
+       🪵2 🧱2 🪨1
+      </span>
+     </button>
+    </div>
+    <p class="rules">
+     Opening setup: each player places a free settlement, then a road touching that settlement. After everyone places once, the order reverses for each player’s second settlement and road. Your second settlement grants resources from adjacent hexes. Choose the matching build mode before clicking a road edge or intersection. During normal play, settlements must connect to your road network and keep at least one empty intersection between settlements.
+    </p>
+   </section>
+   <aside class="side">
+    <div class="panel">
+     <h3>
+      Your resources
+     </h3>
+     <div class="resources" id="resourceBox">
+     </div>
+     <div class="row" style="margin-top:10px">
+      <button id="tradeBtn">
+       Trade 4:1
+      </button>
+      <select aria-label="Give resource" id="giveResource">
+      </select>
+      <select aria-label="Receive resource" id="getResource">
+      </select>
+     </div>
+     <div class="small muted">
+      Trade 4 of one resource for 1 of another.
+     </div>
+    </div>
+    <div class="panel">
+     <h3>
+      Players
+     </h3>
+     <div class="playerlist" id="playersBox">
+     </div>
+    </div>
+    <div class="panel">
+     <h3>
+      Development
+     </h3>
+     <div class="status" id="scoreBox">
+      Victory points: 0 / 10
+     </div>
+     <p class="small muted">
+      Reach 10 victory points to win. Settlements = 1, cities = 2, longest road = bonus 2.
+     </p>
+     <div class="actions">
+      <button id="buyDevBtn">
+       Buy development card
+       <span class="cost">
+        🌾1 🐑1 🪨1
+       </span>
+      </button>
+      <button id="helpBtn">
+       Rules / costs
+      </button>
+     </div>
+     <div class="small muted" id="devBox" style="margin-top:8px">
+     </div>
+    </div>
+    <div class="panel wide">
+     <h3>
+      Game log
+     </h3>
+     <div class="log" id="logBox">
+     </div>
+    </div>
+   </aside>
+  </main>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
