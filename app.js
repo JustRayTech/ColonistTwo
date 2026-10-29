@@ -84,51 +84,132 @@ function generateRoomCode() {
     return Math.random().toString(36).slice(2,8).toUpperCase()
 }
 // Generate the hex island and derive each shared intersection and road edge.
+
 function createBoard() {
-    const cells=[];
-    let ti=0;
-    for(let q=-2;q<=2;q++)for(let r=-2;r<=2;r++) {
-        let s=-q-r;
-        if(Math.abs(s)<=2) {
-            let t=TERRAIN_LAYOUT[ti++];
-            cells.push( {
-                q,r,s,terrain:t[0],color:t[1],number:t[0]==="desert"?0:[2,3,4,5,6,8,9,10,11,12][Math.floor(Math.random()*10)]
-            })
-        }
-    }
-    // unique vertices and roadEdges derived from hex corners
+    // -- // Initialize board data
+    const cells = [];
     const vertices = {};
     const roadEdges = {};
-    const center=(q,r)=>( {
-        x:380+q*76+r*38,y:300+r*66
-    });
-    cells.forEach(cell=> {
-        let c=center(cell.q,cell.r);cell.verts=[];
-        for(let i=0;i<6;i++) {
-            let a=(i-1)*Math.PI/3-Math.PI/6;
-            let x=Math.round(c.x+44*Math.cos(a)),y=Math.round(c.y+44*Math.sin(a));
-            let k=`${x},${y}`;vertices[k] ||= {
-                id:k,x,y,edges:[]
-            };cell.verts.push(k)
+
+    let terrainIndex = 0;
+
+    // -- // Generate the 19 hexagonal tiles
+    for (let q = -2; q <= 2; q++) {
+        for (let r = -2; r <= 2; r++) {
+            const s = -q - r;
+
+            // Skip coordinates outside the hexagonal board
+            if (Math.abs(s) > 2) {
+                continue;
+            }
+
+            // Assign terrain and color from the predefined layout
+            const terrain = TERRAIN_LAYOUT[terrainIndex++];
+
+            // Assign a random number, except for desert tiles
+            const numberOptions = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
+
+            const number = terrain[0] === "desert"
+                ? 0
+                : numberOptions[Math.floor(Math.random() * numberOptions.length)];
+
+            cells.push({
+                q,
+                r,
+                s,
+                terrain: terrain[0],
+                color: terrain[1],
+                number
+            });
+        }
+    }
+
+    // -- // Convert hex coordinates into screen coordinates
+    function getHexCenter(q, r) {
+        return {
+            x: 380 + q * 76 + r * 38,
+            y: 300 + r * 66
+        };
+    }
+
+    // -- // Calculate and register the six unique corners of each tile
+    cells.forEach(cell => {
+        const center = getHexCenter(cell.q, cell.r);
+
+        cell.verts = [];
+
+        for (let cornerIndex = 0; cornerIndex < 6; cornerIndex++) {
+            const angle =
+                (cornerIndex - 1) * Math.PI / 3 - Math.PI / 6;
+
+            const x = Math.round(
+                center.x + 44 * Math.cos(angle)
+            );
+
+            const y = Math.round(
+                center.y + 44 * Math.sin(angle)
+            );
+
+            // Use coordinates as the unique vertex ID
+            const vertexId = `${x},${y}`;
+
+            // Create the vertex only if it doesn't already exist
+            if (!vertices[vertexId]) {
+                vertices[vertexId] = {
+                    id: vertexId,
+                    x,
+                    y,
+                    edges: []
+                };
+            }
+
+            cell.verts.push(vertexId);
         }
     });
-    cells.forEach(cell=> {
-        cell.edges=[];
-        for(let i=0;i<6;i++) {
-            let a=cell.verts[i],b=cell.verts[(i+1)%6],key=[a,b].sort().join("|");roadEdges[key] ||= {
-                id:key,a,b
-            };cell.edges.push(key)
+
+    // -- // Generate unique road edges between adjacent corners
+    cells.forEach(cell => {
+        cell.edges = [];
+
+        for (let cornerIndex = 0; cornerIndex < 6; cornerIndex++) {
+            const startVertex = cell.verts[cornerIndex];
+
+            const endVertex =
+                cell.verts[(cornerIndex + 1) % 6];
+
+            // Sort IDs so the same edge always gets the same key
+            const edgeId = [
+                startVertex,
+                endVertex
+            ].sort().join("|");
+
+            // Create the edge only if it doesn't already exist
+            if (!roadEdges[edgeId]) {
+                roadEdges[edgeId] = {
+                    id: edgeId,
+                    a: startVertex,
+                    b: endVertex
+                };
+            }
+
+            cell.edges.push(edgeId);
         }
     });
-    Object.values(roadEdges).forEach(e=> {
-        vertices[e.a].edges.push(e.id);vertices[e.b].edges.push(e.id)
+
+    // -- // Register connected edges on each vertex
+    Object.values(roadEdges).forEach(edge => {
+        vertices[edge.a].edges.push(edge.id);
+        vertices[edge.b].edges.push(edge.id);
     });
+
+    // -- // Return the completed board
     return {
         cells,
         verts: vertices,
         edges: roadEdges
     };
 }
+
 function createNewGameState(code,name) {
     let board=createBoard(), player= {
         id:currentPlayerId,name:name||"Colonist",color:PLAYER_COLORS[0],res: {
@@ -598,6 +679,12 @@ async function createOnlineRoom() {
         notify(error.message);
     }
 }
+
+
+async function goToGameCreationPage() {
+     window.location.href = "game_creation.html"
+}
+
 async function joinOnlineRoom() {
     try {
         firebaseTools = await initializeFirebase();
@@ -720,9 +807,14 @@ if (!currentPlayerId) {
 // Lobby-only controls. The game page has its own separate document.
 if (getElementById("createBtn")) {
     getElementById("createBtn").addEventListener("click", createOnlineRoom);
+}
+
+if (getElementById("createGameRoom")) {
+    getElementById("createGameRoom").addEventListener("click", goToGameCreationPage)
     getElementById("joinBtn").addEventListener("click", joinOnlineRoom);
     getElementById("soloBtn").addEventListener("click", startLocalDemo);
 }
+
 // Game-only controls.
 if (getElementById("rollBtn")) {
     getElementById("leaveBtn").addEventListener("click", leaveGame);
