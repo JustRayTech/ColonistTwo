@@ -13,13 +13,17 @@
 // Create a Firebase project, enable Realtime Database, and paste its web config
 // here. Never put private server credentials in a browser-based application.
 // ---------------------------------------------------------------------------
-const FIREBASE_CONFIG = {
-    apiKey: "PASTE_API_KEY",
-    authDomain: "PASTE_PROJECT.firebaseapp.com",
-    databaseURL: "https://PASTE_PROJECT-default-rtdb.firebaseio.com",
-    projectId: "PASTE_PROJECT",
-    appId: "PASTE_APP_ID"
+const firebaseConfig = {
+  apiKey: "AIzaSyA4G46NAn-RFWz0l6sx-o2eR3ZeUkKjtMg",
+  authDomain: "kolonisten-df6cb.firebaseapp.com",
+  databaseURL: "https://kolonisten-df6cb-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "kolonisten-df6cb",
+  storageBucket: "kolonisten-df6cb.firebasestorage.app",
+  messagingSenderId: "372541702579",
+  appId: "1:372541702579:web:e48be1d520cabb85a70bc6",
+  measurementId: "G-SEWN7CKHXX"
 };
+
 // Resource identifiers and display labels used throughout the interface.
 const RESOURCE_TYPES = ["wood", "brick", "wool", "grain", "ore"];
 const RESOURCE_DETAILS = {
