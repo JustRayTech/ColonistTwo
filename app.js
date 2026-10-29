@@ -71,6 +71,9 @@ const TERRAIN_LAYOUT = [
     ["wool", "#8cc5a0"], ["grain", "#dfc875"], ["ore", "#8f9eac"],
     ["brick", "#c87962"]
 ];
+
+var localplayerName = "Unknown"
+
 const getElementById = elementId => document.getElementById(elementId);
 let state = null,
 currentPlayerId = null,
@@ -668,7 +671,7 @@ async function createOnlineRoom() {
         firebaseTools = await initializeFirebase();
         isOnlineGame = true;
         const roomCode = generateRoomCode();
-        state = createNewGameState(roomCode, getElementById("nameInput").value.trim() || "Colonist");
+        state = createNewGameState(roomCode, localplayerName);
         roomDatabaseReference = firebaseTools.ref(database, "rooms/" + roomCode);
         await firebaseTools.set(roomDatabaseReference, state);
         sessionStorage.setItem("colonistsRoomCode", roomCode);
@@ -682,7 +685,9 @@ async function createOnlineRoom() {
 
 
 async function goToGameCreationPage() {
-     window.location.href = "game_creation.html"
+    localplayerName = getElementById("nameInput").value.trim() || "Colonist"
+    window.location.href = "game_creation.html"
+    document.getElementById("lobbyCreatorName").textContent = "Your name: " + localplayerName
 }
 
 async function joinOnlineRoom() {
