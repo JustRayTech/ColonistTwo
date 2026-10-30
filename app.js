@@ -1150,7 +1150,6 @@ function renderGameBoard() {
     }
   });
 
-  const placedPortMarkers = [];
   (board.ports || []).forEach(port => {
     const portVertices = port.vertices.map(vertexId => board.verts[vertexId]);
     if (portVertices.some(vertex => !vertex)) return;
@@ -1174,40 +1173,8 @@ function renderGameBoard() {
     const normalLength = Math.hypot(normalX, normalY);
     const normalUnitX = normalX / normalLength;
     const normalUnitY = normalY / normalLength;
-    const tangentUnitX = -normalUnitY;
-    const tangentUnitY = normalUnitX;
-    let markerX;
-    let markerY;
-
-    for (const outwardDistance of [74, 86, 98]) {
-      for (const sideOffset of [0, -24, 24, -48, 48, -72, 72]) {
-        const candidateX =
-          midpoint.x + normalUnitX * outwardDistance + tangentUnitX * sideOffset;
-        const candidateY =
-          midpoint.y + normalUnitY * outwardDistance + tangentUnitY * sideOffset;
-        const inViewBox =
-          candidateX >= 38 && candidateX <= 722 &&
-          candidateY >= 28 && candidateY <= 582;
-        const overlaps = placedPortMarkers.some(placed =>
-          Math.abs(candidateX - placed.x) < 52 &&
-          Math.abs(candidateY - placed.y) < 58
-        );
-
-        if (inViewBox && !overlaps) {
-          markerX = candidateX;
-          markerY = candidateY;
-          break;
-        }
-      }
-
-      if (markerX !== undefined) break;
-    }
-
-    if (markerX === undefined) {
-      markerX = midpoint.x + normalUnitX * 74;
-      markerY = midpoint.y + normalUnitY * 74;
-    }
-    placedPortMarkers.push({ x: markerX, y: markerY });
+    const markerX = midpoint.x + normalUnitX * 44;
+    const markerY = midpoint.y + normalUnitY * 44;
 
     portVertices.forEach(vertex => {
       const directionX = vertex.x - markerX;
@@ -1244,7 +1211,7 @@ function renderGameBoard() {
       ? RESOURCE_DETAILS[port.resource]?.[0] || "?"
       : "?";
     const description = port.resource
-      ? `${RESOURCE_DETAILS[port.resource][1]} port — trade 2 ${RESOURCE_DETAILS[port.resource][1]} for 1 random resource.`
+      ? `${RESOURCE_DETAILS[port.resource][1]} port — trade 2 ${RESOURCE_DETAILS[port.resource][1]} for 1 resource of your choice.`
       : "General port — trade 3 of any one resource for 1 of another.";
     const marker = svgEl("g", {
       class: `port-marker${owner ? " port-unlocked" : ""}`,
@@ -1927,7 +1894,7 @@ function showGameRules() {
     "Settlements: connect to your road network, and keep one intersection empty between settlements.\n" +
     "Roads: must connect to your own road/building.\n" +
     "Cities: upgrade your own settlement.\n" +
-    "Ports: settle either connected coastal intersection to unlock a general port (3 of any one resource for 1 of another) or a resource port (2 of its resource for 1 random different resource).\n\n" +
+    "Ports: settle either connected coastal intersection to unlock a general port (3 of any one resource for 1 of another) or a resource port (2 of its resource for 1 resource of your choice).\n\n" +
     "First to the configured victory-point target wins. This is an original fan-made game inspired by classic hex-tile trading games, not an official adaptation."
   );
 }
@@ -2092,22 +2059,33 @@ function renderTradeBuilder() {
     const hasWant = RESOURCE_TYPES.some(
         resource => (tradeSelection.want[resource] || 0) > 0
     );
+    const wantedTypes = RESOURCE_TYPES.filter(
+        resource => (tradeSelection.want[resource] || 0) > 0
+    );
+    const wantedCount = wantedTypes.reduce(
+        (total, resource) => total + tradeSelection.want[resource],
+        0
+    );
     const portTradeResource = getSpecificPortTradeResource(
         player,
         tradeSelection.offer
     );
+    const validPortWant = portTradeResource &&
+        wantedTypes.length === 1 &&
+        wantedCount === 1 &&
+        wantedTypes[0] !== portTradeResource;
 
     getElementById("sendTradeBtn").disabled = !hasOffer || !hasWant;
     getElementById("bankTradeBtn").disabled =
-        !hasOffer || (!hasWant && !portTradeResource);
+        !hasOffer || (portTradeResource ? !validPortWant : !hasWant);
     getElementById("bankTradeBtn").textContent = portTradeResource
-        ? "Trade 2 for random"
+        ? "Trade at port"
         : "Trade with bank";
 
     if (portTradeResource) {
         getElementById("tradeSummary").insertAdjacentHTML(
             "beforeend",
-            `<div class="trade-port-hint">Port trade: 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 random resource</div>`
+            `<div class="trade-port-hint">Port trade: 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 resource you choose${validPortWant ? ` — receive ${RESOURCE_DETAILS[wantedTypes[0]][0]} ${RESOURCE_DETAILS[wantedTypes[0]][1]}` : ""}</div>`
         );
     }
 }
@@ -2212,27 +2190,41 @@ function tradeWithBank() {
     const give = offeredTypes[0];
 
     if (portTradeResource) {
+        const wantedTypes = RESOURCE_TYPES.filter(
+            resource => (want[resource] || 0) > 0
+        );
+        const wantedCount = wantedTypes.reduce(
+            (total, resource) => total + want[resource],
+            0
+        );
+
+        if (wantedTypes.length !== 1 || wantedCount !== 1) {
+            return SendLocalToast(
+                "Choose exactly 1 resource to receive from the port."
+            );
+        }
+
+        const get = wantedTypes[0];
+        if (get === portTradeResource) {
+            return SendLocalToast(
+                "Choose a different resource to receive from the port."
+            );
+        }
+
         if (!canAffordTrade(player, offer)) {
             return SendLocalToast("You don't have enough resources.");
         }
-
-        const receivedResources = RESOURCE_TYPES.filter(
-            resource => resource !== portTradeResource
-        );
-        const get = receivedResources[
-            Math.floor(Math.random() * receivedResources.length)
-        ];
 
         player.res[portTradeResource] -= 2;
         player.res[get]++;
 
         state.logs.push(
-            `${player.name} traded 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 random ${RESOURCE_DETAILS[get][1]} at a port.`
+            `${player.name} traded 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 ${RESOURCE_DETAILS[get][1]} at a port.`
         );
         state.logs = state.logs.slice(-70);
 
         SendLocalToast(
-            `Port trade completed! 2 ${RESOURCE_DETAILS[portTradeResource][1]} exchanged for 1 random ${RESOURCE_DETAILS[get][1]}.`,
+            `Port trade completed! 2 ${RESOURCE_DETAILS[portTradeResource][1]} exchanged for 1 ${RESOURCE_DETAILS[get][1]}.`,
             "success"
         );
 
