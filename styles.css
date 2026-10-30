@@ -207,6 +207,11 @@ main {
     grid-template-columns:1fr 1fr;
     gap:12px;
 }
+.setupgrid2 {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+}
 .row {
     display:flex;
     align-items:center;
@@ -267,6 +272,9 @@ main {
     text-anchor:middle;
     dominant-baseline:middle;
     pointer-events:none;
+}
+.hex-num.hex-num-highlight {
+    fill:#e91111;
 }
 .road {
     stroke:#f1d6a0;
@@ -466,6 +474,7 @@ padding:12px
 {
 grid-template-columns:1fr
 }
+
 .full
 {
 grid-column:auto

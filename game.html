@@ -44,7 +44,11 @@
       </button>
      </div>
     </div>
-    <div aria-live="polite" class="game-notice hidden" id="gameNotice" role="status">
+    <!-- <div aria-live="polite" class="game-notice hidden" id="gameNotice" role="status"> -->
+
+    <div id="gameNoticeLocal" class="game-notice hidden" role="status" aria-live="polite"></div>
+    <div id="gameNoticeGlobal" class="game-notice hidden" role="status" aria-live="polite"></div>
+
     </div>
     <div class="boardwrap">
      <svg aria-label="Colonists game board" id="board" viewbox="0 0 760 610">

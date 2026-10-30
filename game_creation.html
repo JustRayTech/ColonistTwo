@@ -19,13 +19,48 @@
     Configure your lobby
    </h2>
    <p id="lobbyCreatorName" class="muted">TEST</p>
-   <div class="setupgrid">
+   <div class="setupgrid2">
 
-  <div>
+<div>
     <label for="maximumPlayers">Maximum Players</label>
-    <input type="range" id="maximumPlayers" name="maximumPlayers" min="2" max="6" step="1">
+    <input
+        type="range"
+        id="maximumPlayers"
+        min="2"
+        max="6"
+        step="1"
+        value="4"
+    >
     <div class="slider-labels"></div>
-  </div>
+</div>
+
+<div>
+    <label for="mapSize">Map Size</label>
+    <input
+        type="range"
+        id="mapSize"
+        min="1"
+        max="3"
+        step="1"
+        value="1"
+        data-labels='{"1":"Tiny","2":"Normal","3":"Large"}'
+    >
+    <div class="slider-labels"></div>
+</div>
+
+<div>
+    <label for="victoryPointsNeeded">Victory Points Needed</label>
+    <input
+        type="range"
+        id="victoryPointsNeeded"
+        min="5"
+        max="15"
+        step="1"
+        value="10"
+    >
+    <div class="slider-labels"></div>
+</div>
+
     <button id="createBtn">
       Start Game
     </button>
