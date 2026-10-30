@@ -79,6 +79,19 @@ let isLocalGame = false;
 let firebaseTools = null;
 let syncQueue = Promise.resolve();
 
+// -- // Trading system
+
+let tradeSelection = {
+    offer: {},
+    want: {}
+};
+
+let incomingTradeRequests = {};
+let unsubscribeFromTrades = null;
+let outgoingTradeId = null;
+let outgoingTradeStatus = null;
+let handledOutgoingTradeResultId = null;
+
 // -- // Independent toast state
 let localToastTimer = null;
 let globalToastTimer = null;
@@ -433,7 +446,7 @@ function createBoard(mapSize = 2) {
 function createNewGameState(code, name, config = {}) {
   const mapSize = [1, 2, 3].includes(Number(config.mapSize))
     ? Number(config.mapSize)
-    : 1;
+    : 2;
 
   const maxPlayers = Math.max(
     2,
@@ -730,6 +743,26 @@ function updateStatus() {
 
   getElementById("endBtn").disabled =
     !isPlayersTurn() || state.phase !== "play" || !state.rolled;
+
+  getElementById("openTradeBtn").disabled = !isPlayersTurn() || !state.rolled
+
+  const player = getLocalPlayer();
+  document.querySelectorAll(".modeBtn").forEach(modeButton => {
+    const btnmode = modeButton.dataset.mode;
+
+    if (state.phase === "setup") {
+      modeButton.disabled =
+        !isPlayersTurn() || btnmode !== state.setupStep;
+    } else {
+      modeButton.disabled =
+        btnmode !== "select" &&
+        (!isPlayersTurn() ||
+          state.phase !== "play" ||
+          !state.rolled ||
+          !player ||
+          !hasResourcesNeeded(player, BUILDING_COSTS[btnmode]));
+    }
+  });
 }
 
 function renderResourceInventory() {
@@ -738,14 +771,6 @@ function renderResourceInventory() {
   getElementById("resourceBox").innerHTML = RESOURCE_TYPES.map(resource =>
     `<div class="resource"><div class="emoji">${RESOURCE_DETAILS[resource][0]}</div><strong>${player?.res[resource] || 0}</strong><small>${RESOURCE_DETAILS[resource][1]}</small></div>`
   ).join("");
-
-  for (const id of ["giveResource", "getResource"]) {
-    getElementById(id).innerHTML = RESOURCE_TYPES.map(resource =>
-      `<option value="${resource}">${RESOURCE_DETAILS[resource][0]} ${RESOURCE_DETAILS[resource][1]}</option>`
-    ).join("");
-  }
-
-  getElementById("getResource").selectedIndex = 1;
 }
 
 function renderPlayerList() {
@@ -977,6 +1002,7 @@ function renderGame() {
   renderPlayerList();
   renderGameBoard();
   renderGameLog();
+  renderIncomingTrades();
 
   const player = getLocalPlayer();
 
@@ -996,6 +1022,16 @@ function renderGame() {
 // ---------------------------------------------------------------------------
 // BUILDING HELPERS
 // ---------------------------------------------------------------------------
+
+function hasResourcesNeeded(player, cost) {
+  if (Object.entries(cost).some(([resource, amount]) =>
+    player.res[resource] < amount
+  )) {
+    return false;
+  }else{
+    return true;
+  }
+}
 
 function payResourceCost(player, cost) {
   if (Object.entries(cost).some(([resource, amount]) =>
@@ -1118,7 +1154,9 @@ function placeOpeningPiece(type, id) {
 
     if (state.setupIndex >= state.setupOrder.length) {
       state.phase = "play";
-      state.turn = 0;
+      state.turn = state.players.findIndex(
+        player => player.id === state.setupOrder[0]
+      );
       state.rolled = false;
       state.dice = null;
 
@@ -1386,6 +1424,12 @@ async function endCurrentTurn() {
   state.rolled = false;
   state.dice = null;
 
+      mode = "select"
+      document.querySelectorAll(".modeBtn").forEach(modeButton => {
+        modeButton.style.borderColor =
+          modeButton === mode ? "var(--accent)" : "";
+      });
+
   // if (isPlayersTurn()) {
   //   SendLocalToast("It's your turn, roll the dice.", "info");
   // } else {
@@ -1486,6 +1530,823 @@ function showGameRules() {
     "Ports: coastal intersection, connected to your road network; grants 3:1 trade.\n\n" +
     "First to the configured victory-point target wins. This is an original fan-made game inspired by classic hex-tile trading games, not an official adaptation."
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// TRADING SYSTEM
+// ---------------------------------------------------------------------------
+
+function openTradeMenu() {
+    getElementById("tradeOverlay").classList.remove("hidden");
+    renderTradeMenu();
+}
+
+function closeTradeMenu() {
+    if (["sending", "pending", "processing"].includes(outgoingTradeStatus)) {
+        return;
+    }
+
+    getElementById("tradeOverlay").classList.add("hidden");
+
+    if (outgoingTradeId) {
+        resetOutgoingTrade();
+    }
+}
+
+function renderTradeMenu() {
+    const trackingTrade = !!outgoingTradeId;
+
+    getElementById("tradeBuilder").classList.toggle("hidden", !!trackingTrade);
+    getElementById("tradeProgress").classList.toggle("hidden", !trackingTrade);
+    getElementById("closeTradeBtn").disabled =
+        ["sending", "pending", "processing"].includes(outgoingTradeStatus);
+    getElementById("tradeAgainBtn").classList.toggle(
+        "hidden",
+        ["sending", "pending", "processing", "accepted"].includes(outgoingTradeStatus)
+    );
+
+    if (!trackingTrade) {
+        renderTradeBuilder();
+        return;
+    }
+
+    const request = incomingTradeRequests[outgoingTradeId];
+    const recipients = request?.recipients || {};
+    const statuses = Object.values(recipients);
+    const allDenied = request?.status === "denied";
+
+    const message = outgoingTradeStatus === "sending"
+        ? "Sending your trade request…"
+        : outgoingTradeStatus === "processing"
+            ? "A player is accepting your trade…"
+            : outgoingTradeStatus === "accepted"
+                ? "Your trade was completed successfully!"
+                : allDenied
+                    ? "Everyone declined your trade request."
+                    : outgoingTradeStatus === "cancelled"
+                        ? "Another trade was accepted. Your offer is no longer available."
+                        : outgoingTradeStatus === "failed"
+                            ? "The trade could not be completed."
+                            : "Waiting for players to respond…";
+
+    getElementById("tradeProgressMessage").textContent = message;
+    getElementById("tradeResponseList").innerHTML =
+        outgoingTradeStatus === "sending" && !statuses.length
+            ? state.players
+                .filter(player => player.id !== currentPlayerId)
+                .map(player => `
+                    <div class="trade-response">
+                        <span>${esc(player.name)}</span>
+                        <strong class="pending">Waiting</strong>
+                    </div>
+                `).join("")
+            : Object.entries(recipients).map(([playerId, recipient]) => {
+                const status = recipient.status || "pending";
+                const label = status === "accepted"
+                    ? "Accepted"
+                    : status === "denied"
+                        ? "Denied"
+                        : status === "cancelled"
+                            ? "Cancelled"
+                            : status === "failed"
+                                ? "Failed"
+                            : status === "processing"
+                                ? "Accepting…"
+                                : "Waiting";
+                const statusClass = ["accepted", "denied", "failed"].includes(status)
+                    ? status
+                    : "pending";
+
+                return `
+                    <div class="trade-response">
+                        <span>${esc(recipient.name || playerId)}</span>
+                        <strong class="${statusClass}">${label}</strong>
+                    </div>
+                `;
+            }).join("");
+}
+
+function renderTradeBuilder() {
+    const player = getLocalPlayer();
+    if (!player) return;
+
+    const renderCards = side => {
+        return RESOURCE_TYPES.map(resource => {
+            const amount = tradeSelection[side][resource] || 0;
+
+            return `
+                <div class="trade-card">
+                    <div class="trade-card-info">
+                        <span class="emoji">${RESOURCE_DETAILS[resource][0]}</span>
+                        <span>${RESOURCE_DETAILS[resource][1]}</span>
+                    </div>
+
+                    <div class="trade-card-controls">
+                        <button data-trade-side="${side}"
+                                data-trade-resource="${resource}"
+                                data-trade-change="-1">−</button>
+
+                        <strong>${amount}</strong>
+
+                        <button data-trade-side="${side}"
+                                data-trade-resource="${resource}"
+                                data-trade-change="1"
+                                ${side === "offer" && amount >= player.res[resource]
+                                    ? "disabled" : ""}>+</button>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    };
+
+    getElementById("offerCards").innerHTML = renderCards("offer");
+    getElementById("wantedCards").innerHTML = renderCards("want");
+
+    const formatCards = cards => {
+        const entries = RESOURCE_TYPES
+            .filter(resource => (cards[resource] || 0) > 0)
+            .map(resource =>
+                `${RESOURCE_DETAILS[resource][0]} ${cards[resource]}`
+            );
+
+        return entries.length ? entries.join(" · ") : "Nothing selected";
+    };
+
+    getElementById("tradeSummary").innerHTML = `
+        <strong>Trade preview</strong>
+        <div style="margin-top:6px">
+            <span class="muted">You offer:</span>
+            ${formatCards(tradeSelection.offer)}
+        </div>
+        <div style="margin-top:5px">
+            <span class="muted">You want:</span>
+            ${formatCards(tradeSelection.want)}
+        </div>
+    `;
+
+    const hasOffer = RESOURCE_TYPES.some(
+        resource => (tradeSelection.offer[resource] || 0) > 0
+    );
+
+    const hasWant = RESOURCE_TYPES.some(
+        resource => (tradeSelection.want[resource] || 0) > 0
+    );
+
+    getElementById("sendTradeBtn").disabled = !hasOffer || !hasWant;
+    getElementById("bankTradeBtn").disabled = !hasOffer || !hasWant;
+}
+
+function changeTradeSelection(side, resource, change) {
+    const player = getLocalPlayer();
+
+    if (!player || !RESOURCE_TYPES.includes(resource)) return;
+
+    const current = tradeSelection[side][resource] || 0;
+    const maximum = side === "offer" ? player.res[resource] : 99;
+
+    tradeSelection[side][resource] = Math.max(
+        0,
+        Math.min(maximum, current + change)
+    );
+
+    renderTradeBuilder();
+}
+
+function resetTradeSelection() {
+    tradeSelection = {
+        offer: {},
+        want: {}
+    };
+
+    renderTradeBuilder();
+}
+
+// -- // Check whether a player can afford a collection of resources
+
+function canAffordTrade(player, cards) {
+    return RESOURCE_TYPES.every(resource =>
+        player.res[resource] >= (cards[resource] || 0)
+    );
+}
+
+function hasTradeCards(cards) {
+    return RESOURCE_TYPES.some(resource =>
+        (cards[resource] || 0) > 0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// BANK TRADING
+// ---------------------------------------------------------------------------
+
+function tradeWithBank() {
+    if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) {
+        return SendLocalToast("You can only trade during your turn, after rolling.");
+    }
+
+    const player = getLocalPlayer();
+    const offer = tradeSelection.offer;
+    const want = tradeSelection.want;
+
+    if (!hasTradeCards(offer) || !hasTradeCards(want)) {
+        return SendLocalToast("Choose the cards you want to exchange.");
+    }
+
+    // -- // Bank trades only allow one resource type in each direction
+
+    const offeredTypes = RESOURCE_TYPES.filter(
+        resource => (offer[resource] || 0) > 0
+    );
+
+    const wantedTypes = RESOURCE_TYPES.filter(
+        resource => (want[resource] || 0) > 0
+    );
+
+    if (offeredTypes.length !== 1 || wantedTypes.length !== 1) {
+        return SendLocalToast(
+            "Bank trades must exchange one resource type for another."
+        );
+    }
+
+    const give = offeredTypes[0];
+    const get = wantedTypes[0];
+
+    if (give === get) {
+        return SendLocalToast("Choose two different resources.");
+    }
+
+    const hasPort = Object.values(state.ports).some(
+        port => port.owner === player.id
+    );
+
+    const rate = hasPort ? 3 : 4;
+
+    if (offer[give] !== rate || want[get] !== 1) {
+        return SendLocalToast(
+            `The bank requires exactly ${rate} cards for 1 card.`
+        );
+    }
+
+    if (!canAffordTrade(player, offer)) {
+        return SendLocalToast("You don't have enough resources.");
+    }
+
+    player.res[give] -= rate;
+    player.res[get]++;
+
+    state.logs.push(
+        `${player.name} traded ${rate} ${RESOURCE_DETAILS[give][1]} for 1 ${RESOURCE_DETAILS[get][1]} at the bank.`
+    );
+
+    state.logs = state.logs.slice(-70);
+
+    SendLocalToast(
+        `Bank trade completed! ${rate} ${RESOURCE_DETAILS[give][1]} exchanged for 1 ${RESOURCE_DETAILS[get][1]}.`,
+        "success"
+    );
+
+  resetTradeSelection();
+
+  synchronizeRoomState();
+  renderGame();
+}
+
+// ---------------------------------------------------------------------------
+// PLAYER-TO-PLAYER TRADING
+// ---------------------------------------------------------------------------
+
+async function sendTradeRequest() {
+    if (!isOnlineGame || !firebaseTools) {
+        return SendLocalToast(
+            "Player trading is only available in online rooms.",
+            "warning"
+        );
+    }
+
+    if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) {
+        return SendLocalToast(
+            "You can only trade during your turn, after rolling."
+        );
+    }
+
+    const player = getLocalPlayer();
+
+    const offer = { ...tradeSelection.offer };
+    const want = { ...tradeSelection.want };
+
+    if (!hasTradeCards(offer) || !hasTradeCards(want)) {
+        return SendLocalToast("Select cards to offer and cards to request.");
+    }
+
+    if (!canAffordTrade(player, offer)) {
+        return SendLocalToast("You don't have enough cards to make this offer.");
+    }
+
+    if (RESOURCE_TYPES.every(resource =>
+        (offer[resource] || 0) === (want[resource] || 0)
+    )) {
+        return SendLocalToast("You can't trade identical card collections.");
+    }
+
+    const tradeId = crypto.randomUUID();
+    const recipients = Object.fromEntries(
+        state.players
+            .filter(otherPlayer => otherPlayer.id !== currentPlayerId)
+            .map(otherPlayer => [
+                otherPlayer.id,
+                { name: otherPlayer.name, status: "pending" }
+            ])
+    );
+    if (!Object.keys(recipients).length) {
+        return SendLocalToast(
+            "There are no other players to trade with.",
+            "warning"
+        );
+    }
+
+    const request = {
+        id: tradeId,
+        senderId: currentPlayerId,
+        senderName: player.name,
+        offer,
+        want,
+        recipients,
+        status: "pending",
+        createdAt: Date.now()
+    };
+
+    outgoingTradeId = tradeId;
+    outgoingTradeStatus = "sending";
+    handledOutgoingTradeResultId = null;
+    resetTradeSelection();
+    renderTradeMenu();
+
+    try {
+        const tradeRef = firebaseTools.ref(
+            database,
+            `roomTrades/${state.code}/${tradeId}`
+        );
+
+        await firebaseTools.set(tradeRef, request);
+        outgoingTradeStatus = "pending";
+        renderTradeMenu();
+
+    } catch (error) {
+        console.error("Trade request failed:", error);
+        outgoingTradeId = null;
+        outgoingTradeStatus = null;
+        renderTradeMenu();
+
+        SendLocalToast(
+            "Could not send trade request. Check your connection.",
+            "error"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// INCOMING TRADE NOTIFICATIONS
+// ---------------------------------------------------------------------------
+
+function subscribeToTradeRequests(roomCode) {
+    if (unsubscribeFromTrades) {
+        unsubscribeFromTrades();
+        unsubscribeFromTrades = null;
+    }
+
+    const tradeRef = firebaseTools.ref(
+        database,
+        `roomTrades/${roomCode}`
+    );
+
+    unsubscribeFromTrades = firebaseTools.onValue(
+        tradeRef,
+        snapshot => {
+            incomingTradeRequests = snapshot.exists()
+                ? snapshot.val()
+                : {};
+
+            updateOutgoingTradeProgress();
+            renderIncomingTrades();
+        }
+    );
+}
+
+function updateOutgoingTradeProgress() {
+    if (!outgoingTradeId) return;
+
+    const request = incomingTradeRequests[outgoingTradeId];
+    if (!request) return;
+
+    outgoingTradeStatus = request.status;
+    renderTradeMenu();
+
+    if (
+        request.status === "accepted" &&
+        handledOutgoingTradeResultId !== outgoingTradeId
+    ) {
+        handledOutgoingTradeResultId = outgoingTradeId;
+        closeTradeMenu();
+        SendLocalToast("You traded successfully!", "success");
+    } else if (
+        request.status === "denied" &&
+        handledOutgoingTradeResultId !== outgoingTradeId
+    ) {
+        handledOutgoingTradeResultId = outgoingTradeId;
+        SendLocalToast("Everyone declined your trade request.", "warning");
+    } else if (
+        request.status === "cancelled" &&
+        handledOutgoingTradeResultId !== outgoingTradeId
+    ) {
+        handledOutgoingTradeResultId = outgoingTradeId;
+        SendLocalToast(
+            "Another trade was accepted. Your offer is no longer available.",
+            "info"
+        );
+    } else if (
+        request.status === "failed" &&
+        handledOutgoingTradeResultId !== outgoingTradeId
+    ) {
+        handledOutgoingTradeResultId = outgoingTradeId;
+        SendLocalToast("The trade could not be completed.", "error");
+    }
+}
+
+function startAnotherTrade() {
+    resetOutgoingTrade();
+}
+
+function resetOutgoingTrade() {
+    outgoingTradeId = null;
+    outgoingTradeStatus = null;
+    handledOutgoingTradeResultId = null;
+    resetTradeSelection();
+    renderTradeMenu();
+}
+
+function renderIncomingTrades() {
+    const container = getElementById("incomingTrades");
+
+    if (!container || !state) return;
+
+    const requests = Object.values(incomingTradeRequests)
+        .filter(request =>
+            request.status === "pending" &&
+            request.senderId !== currentPlayerId &&
+            request.recipients?.[currentPlayerId]?.status === "pending"
+        )
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .slice(0, 3);
+
+    container.innerHTML = requests.map(request => {
+        const player = getLocalPlayer();
+
+        const canPay = player && canAffordTrade(
+            player,
+            request.want || {}
+        );
+
+        const formatCards = cards => RESOURCE_TYPES
+            .filter(resource => (cards?.[resource] || 0) > 0)
+            .map(resource => `
+                <strong>
+                    ${RESOURCE_DETAILS[resource][0]}
+                    ${cards[resource]}
+                    ${RESOURCE_DETAILS[resource][1]}
+                </strong>
+            `).join("");
+
+        return `
+            <div class="incoming-trade">
+
+                <div class="incoming-trade-header">
+                    <strong>${esc(request.senderName)} wants to trade</strong>
+                    <span class="incoming-trade-tag">TRADE OFFER</span>
+                </div>
+
+                <div class="incoming-trade-resources">
+
+                    <div class="incoming-trade-side">
+                        <small>They offer</small>
+                        ${formatCards(request.offer)}
+                    </div>
+
+                    <div class="incoming-trade-side">
+                        <small>They want</small>
+                        ${formatCards(request.want)}
+                    </div>
+
+                </div>
+
+                <div class="incoming-trade-buttons">
+
+                    <button class="accept"
+                        data-trade-action="accept"
+                        data-trade-id="${esc(request.id)}"
+                        ${!canPay ? "disabled" : ""}>
+                        Accept
+                    </button>
+
+                    <button class="deny"
+                        data-trade-action="deny"
+                        data-trade-id="${esc(request.id)}">
+                        Deny
+                    </button>
+
+                </div>
+
+                ${!canPay
+                    ? `<div class="small muted" style="margin-top:8px">
+                        You don't have the requested resources.
+                       </div>`
+                    : ""
+                }
+
+            </div>
+        `;
+    }).join("");
+}
+
+// ---------------------------------------------------------------------------
+// ACCEPT / DENY TRADE REQUESTS
+// ---------------------------------------------------------------------------
+
+async function acceptTradeRequest(tradeId) {
+    if (!isOnlineGame || !firebaseTools) return;
+
+    const tradesRef = firebaseTools.ref(
+        database,
+        `roomTrades/${state.code}`
+    );
+
+    try {
+        // Claim one request for the room so two offers cannot be accepted at once.
+
+        const claim = await firebaseTools.runTransaction(
+            tradesRef,
+            current => {
+                const request = current?.[tradeId];
+                if (
+                    !request ||
+                    request.status !== "pending" ||
+                    request.recipients?.[currentPlayerId]?.status !== "pending" ||
+                    Object.values(current).some(item =>
+                        item?.status === "processing"
+                    )
+                ) {
+                    return;
+                }
+
+                return {
+                    ...current,
+                    [tradeId]: {
+                        ...request,
+                        status: "processing",
+                        acceptedBy: currentPlayerId,
+                        recipients: {
+                            ...request.recipients,
+                            [currentPlayerId]: {
+                                ...request.recipients[currentPlayerId],
+                                status: "processing"
+                            }
+                        }
+                    }
+                };
+            }
+        );
+
+        if (!claim.committed) {
+            return SendLocalToast(
+                "This trade request is no longer available.",
+                "warning"
+            );
+        }
+
+        const request = claim.snapshot.val()[tradeId];
+        const tradeRef = firebaseTools.ref(
+            database,
+            `roomTrades/${state.code}/${tradeId}`
+        );
+
+        // -- // Atomically exchange resources in the room state
+
+        const result = await firebaseTools.runTransaction(
+            roomDatabaseReference,
+            current => {
+                if (!current) return;
+
+                current = normalizeRoomState(current);
+
+                const sender = current.players.find(
+                    p => p.id === request.senderId
+                );
+
+                const receiver = current.players.find(
+                    p => p.id === currentPlayerId
+                );
+
+                if (!sender || !receiver) return;
+
+                if (
+                    !canAffordTrade(sender, request.offer) ||
+                    !canAffordTrade(receiver, request.want)
+                ) {
+                    return;
+                }
+
+                // Sender gives their offered cards
+
+                for (const resource of RESOURCE_TYPES) {
+                    const amount = request.offer[resource] || 0;
+
+                    sender.res[resource] -= amount;
+                    receiver.res[resource] += amount;
+                }
+
+                // Receiver gives the requested cards
+
+                for (const resource of RESOURCE_TYPES) {
+                    const amount = request.want[resource] || 0;
+
+                    receiver.res[resource] -= amount;
+                    sender.res[resource] += amount;
+                }
+
+                current.logs.push(
+                    `${receiver.name} accepted a trade from ${sender.name}.`
+                );
+
+                current.logs = current.logs.slice(-70);
+
+                return current;
+            }
+        );
+
+        if (!result.committed) {
+            await firebaseTools.runTransaction(tradeRef, current => {
+                if (
+                    !current ||
+                    current.status !== "processing" ||
+                    current.acceptedBy !== currentPlayerId
+                ) {
+                    return;
+                }
+
+                return {
+                    ...current,
+                    status: "failed",
+                    recipients: Object.fromEntries(
+                        Object.entries(current.recipients || {}).map(
+                            ([recipientId, recipient]) => [
+                                recipientId,
+                                {
+                                    ...recipient,
+                                    status: recipientId === currentPlayerId
+                                        ? "failed"
+                                        : recipient.status === "pending"
+                                            ? "cancelled"
+                                            : recipient.status
+                                }
+                            ]
+                        )
+                    )
+                };
+            });
+
+            return SendLocalToast(
+                "Trade failed. One of the players no longer has the required resources.",
+                "error"
+            );
+        }
+
+        const completion = await firebaseTools.runTransaction(
+            tradesRef,
+            current => {
+                const activeRequest = current?.[tradeId];
+                if (
+                    !activeRequest ||
+                    activeRequest.status !== "processing" ||
+                    activeRequest.acceptedBy !== currentPlayerId
+                ) {
+                    return;
+                }
+
+                const updated = { ...current };
+                for (const [otherId, otherRequest] of Object.entries(updated)) {
+                    if (otherRequest.status === "pending") {
+                        updated[otherId] = {
+                            ...otherRequest,
+                            status: "cancelled",
+                            recipients: Object.fromEntries(
+                                Object.entries(otherRequest.recipients || {})
+                                    .map(([recipientId, recipient]) => [
+                                        recipientId,
+                                        recipient.status === "pending"
+                                            ? { ...recipient, status: "cancelled" }
+                                            : recipient
+                                    ])
+                            )
+                        };
+                    }
+                }
+
+                updated[tradeId] = {
+                    ...activeRequest,
+                    status: "accepted",
+                    recipients: {
+                        ...activeRequest.recipients,
+                        [currentPlayerId]: {
+                            ...activeRequest.recipients[currentPlayerId],
+                            status: "accepted"
+                        }
+                    }
+                };
+
+                return updated;
+            }
+        );
+
+        if (!completion.committed) {
+            throw new Error("Trade completed but its room status could not be updated.");
+        }
+
+        state = normalizeRoomState(result.snapshot.val());
+
+        SendLocalToast(
+            `Trade with ${request.senderName} completed!`,
+            "success"
+        );
+
+        renderGame();
+
+    } catch (error) {
+        console.error("Accept trade failed:", error);
+
+        SendLocalToast(
+            "Something went wrong while accepting the trade.",
+            "error"
+        );
+    }
+}
+
+async function denyTradeRequest(tradeId) {
+    if (!isOnlineGame || !firebaseTools) return;
+
+    const tradeRef = firebaseTools.ref(
+        database,
+        `roomTrades/${state.code}/${tradeId}`
+    );
+
+    try {
+        const result = await firebaseTools.runTransaction(
+            tradeRef,
+            current => {
+                if (
+                    !current ||
+                    current.status !== "pending" ||
+                    !current.recipients?.[currentPlayerId] ||
+                    current.recipients[currentPlayerId].status !== "pending"
+                ) {
+                    return;
+                }
+
+                const recipients = {
+                    ...current.recipients,
+                    [currentPlayerId]: {
+                        ...current.recipients[currentPlayerId],
+                        status: "denied"
+                    }
+                };
+                const allDenied = Object.values(recipients).every(
+                    recipient => recipient.status === "denied"
+                );
+
+                return {
+                    ...current,
+                    status: allDenied ? "denied" : "pending",
+                    recipients
+                };
+            }
+        );
+
+        if (!result.committed) {
+            return SendLocalToast(
+                "This trade request is no longer available.",
+                "warning"
+            );
+        }
+
+        SendLocalToast("Trade request denied.", "info");
+
+    } catch (error) {
+        console.error("Deny trade failed:", error);
+
+        SendLocalToast(
+            "Could not deny the trade request.",
+            "error"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1712,6 +2573,10 @@ function beginOpeningPlacements() {
   state.phase = "setup";
 
   const forward = state.players.map(player => player.id);
+  for (let index = forward.length - 1; index > 0; index--) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [forward[index], forward[randomIndex]] = [forward[randomIndex], forward[index]];
+  }
 
   state.setupOrder = [...forward, ...forward.slice().reverse()];
   state.setupIndex = 0;
@@ -1774,6 +2639,11 @@ function leaveGame() {
     unsubscribeFromRoom = null;
   }
 
+  if (unsubscribeFromTrades) {
+    unsubscribeFromTrades();
+    unsubscribeFromTrades = null;
+}
+
   if (unsubscribeFromGlobalToasts) {
     unsubscribeFromGlobalToasts();
     unsubscribeFromGlobalToasts = null;
@@ -1821,9 +2691,75 @@ if (getElementById("rollBtn")) {
   getElementById("startPlacementBtn").addEventListener("click", beginOpeningPlacements);
   getElementById("rollBtn").addEventListener("click", rollDice);
   getElementById("endBtn").addEventListener("click", endCurrentTurn);
-  getElementById("tradeBtn").addEventListener("click", tradeResources);
   getElementById("buyDevBtn").addEventListener("click", buyDevelopmentCard);
   getElementById("helpBtn").addEventListener("click", showGameRules);
+// -- // Trading menu
+
+getElementById("openTradeBtn").addEventListener(
+    "click",
+    openTradeMenu
+);
+
+getElementById("closeTradeBtn").addEventListener(
+    "click",
+    closeTradeMenu
+);
+
+getElementById("tradeAgainBtn").addEventListener(
+    "click",
+    startAnotherTrade
+);
+
+getElementById("sendTradeBtn").addEventListener(
+    "click",
+    sendTradeRequest
+);
+
+getElementById("bankTradeBtn").addEventListener(
+    "click",
+    tradeWithBank
+);
+
+// -- // Resource card selection
+
+getElementById("offerCards").addEventListener("click", event => {
+    const button = event.target.closest("[data-trade-change]");
+    if (!button) return;
+
+    changeTradeSelection(
+        button.dataset.tradeSide,
+        button.dataset.tradeResource,
+        Number(button.dataset.tradeChange)
+    );
+});
+
+getElementById("wantedCards").addEventListener("click", event => {
+    const button = event.target.closest("[data-trade-change]");
+    if (!button) return;
+
+    changeTradeSelection(
+        button.dataset.tradeSide,
+        button.dataset.tradeResource,
+        Number(button.dataset.tradeChange)
+    );
+});
+
+// -- // Incoming trade notifications
+
+getElementById("incomingTrades").addEventListener("click", event => {
+    const button = event.target.closest("[data-trade-action]");
+    if (!button || button.disabled) return;
+
+    const tradeId = button.dataset.tradeId;
+
+    if (button.dataset.tradeAction === "accept") {
+        acceptTradeRequest(tradeId);
+    }
+
+    if (button.dataset.tradeAction === "deny") {
+        denyTradeRequest(tradeId);
+    }
+});
 
   document.querySelectorAll(".modeBtn").forEach(button => {
     button.addEventListener("click", () => {
@@ -1883,6 +2819,7 @@ async function bootGamePage() {
     subscribeToGlobalToasts(roomCode);
 
     subscribeToRoomUpdates();
+    subscribeToTradeRequests(roomCode);
   } catch (error) {
     alert("Could not connect to the room: " + error.message);
     window.location.href = "lobby.html";

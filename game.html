@@ -1,155 +1,242 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Colonists — Game</title>
-  <link rel="stylesheet" href="styles.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Colonists — Game</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <div>
-      <div class="brand">⚓ <span>Colonists of Catan</span></div>
-      <div class="sub">Trade, build, expand — a multiplayer island game</div>
-    </div>
-    <div class="row">
-      <span class="muted small" id="roomBadge">Connecting…</span>
-      <button id="leaveBtn">Leave room</button>
-    </div>
-  </header>
- <main id="game">
-   <section id="gameArea">
-    <!-- Turn controls and the color-coded action banner -->
-    <div class="turnbar">
-     <div>
-      <b id="roomTitle">
-       Room
-      </b>
-      <div class="muted small" id="turnText">
-       Waiting for players…
-      </div>
-     </div>
-     <div class="row">
-      <span class="dice" id="diceDisplay">
-       🎲 —
-      </span>
-      <button class="hidden" id="startPlacementBtn">
-       Start placements
-      </button>
-      <button id="rollBtn">
-       Roll dice
-      </button>
-      <button disabled="" id="endBtn">
-       End turn →
-      </button>
-     </div>
-    </div>
-    <!-- <div aria-live="polite" class="game-notice hidden" id="gameNotice" role="status"> -->
+    <header>
+        <div>
+            <div class="brand">⚓ <span>Colonists of Catan</span></div>
+            <div class="sub">Trade, build, expand — a multiplayer island game</div>
+        </div>
+        <div class="row">
+            <span class="muted small" id="roomBadge">Connecting…</span>
+            <button id="leaveBtn">Leave room</button>
+        </div>
+    </header>
 
-    <div id="gameNoticeLocal" class="game-notice hidden" role="status" aria-live="polite"></div>
-    <div id="gameNoticeGlobal" class="game-notice hidden" role="status" aria-live="polite"></div>
+    <main id="game">
+        <section id="gameArea">
 
-    </div>
-    <div class="boardwrap">
-     <svg aria-label="Colonists game board" id="board" viewbox="0 0 760 610">
-     </svg>
-    </div>
-    <div class="row" style="margin-top:10px">
-     <span class="muted small">
-      Build mode:
-     </span>
-     <button class="modeBtn" data-mode="select">
-      Select
-     </button>
-     <button class="modeBtn" data-mode="road">
-      Road
-      <span class="cost">
-       🪵1 🧱1
-      </span>
-     </button>
-     <button class="modeBtn" data-mode="settlement">
-      Settlement
-      <span class="cost">
-       🪵1 🧱1 🌾1 🐑1
-      </span>
-     </button>
-     <button class="modeBtn" data-mode="city">
-      City
-      <span class="cost">
-       🪨3 🌾2
-      </span>
-     </button>
-     <button class="modeBtn" data-mode="port">
-      Port
-      <span class="cost">
-       🪵2 🧱2 🪨1
-      </span>
-     </button>
-    </div>
-    <p class="rules">
-     Opening setup: each player places a free settlement, then a road touching that settlement. After everyone places once, the order reverses for each player’s second settlement and road. Your second settlement grants resources from adjacent hexes. Choose the matching build mode before clicking a road edge or intersection. During normal play, settlements must connect to your road network and keep at least one empty intersection between settlements.
-    </p>
-   </section>
-   <aside class="side">
-    <div class="panel">
-     <h3>
-      Your resources
-     </h3>
-     <div class="resources" id="resourceBox">
-     </div>
-     <div class="row" style="margin-top:10px">
-      <button id="tradeBtn">
-       Trade 4:1
-      </button>
-      <select aria-label="Give resource" id="giveResource">
-      </select>
-      <select aria-label="Receive resource" id="getResource">
-      </select>
-     </div>
-     <div class="small muted">
-      Trade 4 of one resource for 1 of another.
-     </div>
-    </div>
-    <div class="panel">
-     <h3>
-      Players
-     </h3>
-     <div class="playerlist" id="playersBox">
-     </div>
-    </div>
-    <div class="panel">
-     <h3>
-      Development
-     </h3>
-     <div class="status" id="scoreBox">
-      Victory points: 0 / 10
-     </div>
-     <p class="small muted">
-      Reach 10 victory points to win. Settlements = 1, cities = 2, longest road = bonus 2.
-     </p>
-     <div class="actions">
-      <button id="buyDevBtn">
-       Buy development card
-       <span class="cost">
-        🌾1 🐑1 🪨1
-       </span>
-      </button>
-      <button id="helpBtn">
-       Rules / costs
-      </button>
-     </div>
-     <div class="small muted" id="devBox" style="margin-top:8px">
-     </div>
-    </div>
-    <div class="panel wide">
-     <h3>
-      Game log
-     </h3>
-     <div class="log" id="logBox">
-     </div>
-    </div>
-   </aside>
-  </main>
-  <script src="app.js" type="module"></script>
+            <!-- Incoming trades -->
+            <div id="incomingTrades" class="incoming-trades"></div>
+
+            <!-- Turn controls -->
+            <div class="turnbar">
+                <div>
+                    <b id="roomTitle">Room</b>
+                    <div class="muted small" id="turnText">
+                        Waiting for players…
+                    </div>
+                </div>
+
+                <div class="row">
+                    <span class="dice" id="diceDisplay">🎲 —</span>
+
+                    <button class="hidden" id="startPlacementBtn">
+                        Start placements
+                    </button>
+
+                    <button id="rollBtn">Roll dice</button>
+
+                    <button disabled id="endBtn">
+                        End turn →
+                    </button>
+                </div>
+            </div>
+
+            <!-- Game notifications -->
+            <div id="gameNoticeLocal"
+                 class="game-notice hidden"
+                 role="status"
+                 aria-live="polite"></div>
+
+            <div id="gameNoticeGlobal"
+                 class="game-notice hidden"
+                 role="status"
+                 aria-live="polite"></div>
+
+            <!-- Game board -->
+            <div class="board-area">
+                <div class="boardwrap">
+                    <svg
+                        aria-label="Colonists game board"
+                        id="board"
+                        viewBox="0 0 760 610">
+                    </svg>
+                </div>
+
+                <!-- Trading overlay -->
+                <div id="tradeOverlay" class="trade-overlay hidden">
+
+                    <div id="tradePanel" class="trade-panel">
+
+                        <div class="trade-header">
+                            <div>
+                                <h3>Trading post</h3>
+                                <div class="small muted">
+                                    Choose what you want and what you offer.
+                                </div>
+                            </div>
+
+                            <button id="closeTradeBtn"
+                                    class="trade-close-btn">✕</button>
+                        </div>
+
+                        <div id="tradeBuilder">
+                            <div class="trade-columns">
+
+                                <div class="trade-column">
+                                    <h4>Offering cards</h4>
+                                    <div class="small muted">What you're giving</div>
+                                    <div id="offerCards" class="trade-cards"></div>
+                                </div>
+
+                                <div class="trade-column">
+                                    <h4>Wanted cards</h4>
+                                    <div class="small muted">What you want in return</div>
+                                    <div id="wantedCards" class="trade-cards"></div>
+                                </div>
+                            </div>
+
+                            <div class="trade-summary" id="tradeSummary">
+                                Select your cards to create a trade.
+                            </div>
+
+                            <div class="trade-actions">
+                                <button id="sendTradeBtn" class="trade-send-btn">
+                                    Send trade request
+                                </button>
+
+                                <button id="bankTradeBtn">
+                                    Trade with bank
+                                </button>
+                            </div>
+
+                            <div class="small muted trade-footnote">
+                                Trade requests are visible to all other players.
+                            </div>
+                        </div>
+
+                        <div id="tradeProgress" class="trade-progress hidden"
+                             aria-live="polite">
+                            <p id="tradeProgressMessage"></p>
+                            <div id="tradeResponseList"
+                                 class="trade-response-list"></div>
+                            <button id="tradeAgainBtn" class="hidden">
+                                Create another trade
+                            </button>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Build modes -->
+            <div class="row build-modes" style="margin-top:10px">
+                <span class="muted small">Build mode:</span>
+
+                <button class="modeBtn" data-mode="select">
+                    Select
+                </button>
+
+                <button class="modeBtn" data-mode="road">
+                    Road
+                    <span class="cost">🪵1 🧱1</span>
+                </button>
+
+                <button class="modeBtn" data-mode="settlement">
+                    Settlement
+                    <span class="cost">🪵1 🧱1 🌾1 🐑1</span>
+                </button>
+
+                <button class="modeBtn" data-mode="city">
+                    City
+                    <span class="cost">🪨3 🌾2</span>
+                </button>
+
+                <button class="modeBtn" data-mode="port">
+                    Port
+                    <span class="cost">🪵2 🧱2 🪨1</span>
+                </button>
+            </div>
+
+            <p class="rules">
+                Opening setup: each player places a free settlement, then a road
+                touching that settlement. After everyone places once, the order
+                reverses for each player's second settlement and road. Your
+                second settlement grants resources from adjacent hexes. Choose
+                the matching build mode before clicking a road edge or
+                intersection. During normal play, settlements must connect to
+                your road network and keep at least one empty intersection
+                between settlements.
+            </p>
+
+        </section>
+
+        <!-- Sidebar -->
+        <aside class="side">
+
+            <div class="panel">
+                <h3>Your resources</h3>
+
+                <div class="resources" id="resourceBox"></div>
+
+                <div class="trade-entry">
+                    <button id="openTradeBtn" class="trade-open-btn">
+                        <span>⇄</span> Open trade menu
+                    </button>
+
+                    <div class="small muted">
+                        Trade with other players or exchange resources with the bank.
+                    </div>
+                </div>
+
+                <div class="small muted">
+                    Trade 4 of one resource for 1 of another.
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Players</h3>
+                <div class="playerlist" id="playersBox"></div>
+            </div>
+
+            <div class="panel">
+                <h3>Development</h3>
+
+                <div class="status" id="scoreBox">
+                    Victory points: 0 / 10
+                </div>
+
+                <p class="small muted">
+                    Reach 10 victory points to win. Settlements = 1,
+                    cities = 2, longest road = bonus 2.
+                </p>
+
+                <div class="actions">
+                    <button id="buyDevBtn">
+                        Buy development card
+                        <span class="cost">🌾1 🐑1 🪨1</span>
+                    </button>
+
+                    <button id="helpBtn">Rules / costs</button>
+                </div>
+
+                <div class="small muted" id="devBox" style="margin-top:8px"></div>
+            </div>
+
+            <div class="panel wide">
+                <h3>Game log</h3>
+                <div class="log" id="logBox"></div>
+            </div>
+
+        </aside>
+    </main>
+
+    <script src="app.js" type="module"></script>
 </body>
 </html>
