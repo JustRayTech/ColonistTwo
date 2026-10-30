@@ -88,6 +88,68 @@ function generateRoomCode() {
 }
 // Generate the hex island and derive each shared intersection and road edge.
 
+
+// -- // Slider Setup
+document.querySelectorAll('input[type="range"]').forEach(slider => {
+    const min = Number(slider.min || 0);
+    const max = Number(slider.max || 100);
+    const step = Number(slider.step) || 1;
+    const container = slider.parentElement.querySelector(".slider-labels");
+
+    // -- // Progress
+    function updateSlider() {
+        const value = Number(slider.value);
+        const progress = ((value - min) / (max - min)) * 100;
+
+        slider.style.setProperty("--slider-progress", `${progress}%`);
+    }
+
+    slider.addEventListener("input", updateSlider);
+    updateSlider();
+
+    // -- // Labels
+// -- // Labels
+if (container && max > min && step > 0) {
+    container.replaceChildren();
+
+    const values = [];
+
+    for (let value = min; value < max; value += step) {
+        values.push(value);
+    }
+
+    if (values[values.length - 1] !== max) {
+        values.push(max);
+    }
+
+    values.forEach(value => {
+        const label = document.createElement("span");
+        label.textContent = value;
+
+        const progress = ((value - min) / (max - min)) * 100;
+        label.style.left = `${progress}%`;
+
+        container.appendChild(label);
+    });
+}
+});
+
+// -- // Slider Progress
+document.querySelectorAll('input[type="range"]').forEach(slider => {
+    function updateSlider() {
+        const min = Number(slider.min) || 0;
+        const max = Number(slider.max) || 100;
+        const value = Number(slider.value);
+
+        const progress = ((value - min) / (max - min)) * 100;
+
+        slider.style.setProperty("--slider-progress", `${progress}%`);
+    }
+
+    slider.addEventListener("input", updateSlider);
+    updateSlider();
+});
+
 function createBoard() {
     // -- // Initialize board data
     const cells = [];
@@ -687,7 +749,8 @@ async function createOnlineRoom() {
 async function goToGameCreationPage() {
     localplayerName = getElementById("nameInput").value.trim() || "Colonist"
     window.location.href = "game_creation.html"
-    document.getElementById("lobbyCreatorName").textContent = "Your name: " + localplayerName
+    
+    getElementById("lobbyCreatorName").textContent = "Your name: " + localplayerName || "Name not found"
 }
 
 async function joinOnlineRoom() {

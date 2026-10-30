@@ -69,6 +69,29 @@ input[type="range"]::-moz-range-thumb {
     transition: transform .15s, box-shadow .15s;
 }
 
+.slider-labels {
+    position: relative;
+    height: 18px;
+    margin-top: 2px;
+    margin-left: 7px;
+    font-size: 12px;
+    color: #8a9ba5;
+}
+
+.slider-labels span {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
+
+.slider-labels span:first-child {
+    transform: translateX(0);
+}
+
+.slider-labels span:last-child {
+    transform: translateX(-100%);
+}
+
 /* // Hover and focus */
 input[type="range"]:hover::-webkit-slider-thumb {
     transform: scale(1.15);
