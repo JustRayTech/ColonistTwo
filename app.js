@@ -36,7 +36,6 @@ const BUILDING_COSTS = {
   road: { wood: 1, brick: 1 },
   settlement: { wood: 1, brick: 1, grain: 1, wool: 1 },
   city: { ore: 3, grain: 2 },
-  port: { wood: 2, brick: 2, ore: 1 },
   dev: { grain: 1, wool: 1, ore: 1 }
 };
 
@@ -78,6 +77,8 @@ let unsubscribeFromGlobalToasts = null;
 let isLocalGame = false;
 let firebaseTools = null;
 let syncQueue = Promise.resolve();
+let resourceHighlightTimer = null;
+let resourceHighlightTimerUntil = 0;
 
 // -- // Trading system
 
@@ -187,7 +188,7 @@ document.querySelectorAll('input[type="range"]').forEach(slider => {
 function noticeKind(message, explicit = null) {
   if (explicit) return explicit;
 
-  if (/not enough|already occupied|already used|occupied|must|needs?|cannot|can't|wait for|not your turn|choose two|roll the dice before|ports can only|upgrade one|at least two players|settlements need|road edge is already|opening order|costs? \d|port needs/i.test(message)) {
+  if (/not enough|already occupied|already used|occupied|must|needs?|cannot|can't|wait for|not your turn|choose two|roll the dice before|upgrade one|at least two players|settlements need|road edge is already|opening order|costs? \d/i.test(message)) {
     return "error";
   }
 
@@ -319,18 +320,6 @@ function createBoard(mapSize = 2) {
     3: 3
   }[Number(mapSize)] || 1;
 
-  const baseTerrain = {};
-  let terrainIndex = 0;
-
-  for (let q = -2; q <= 2; q++) {
-    for (let r = -2; r <= 2; r++) {
-      const s = -q - r;
-      if (Math.abs(s) > 2) continue;
-
-      baseTerrain[`${q},${r}`] = TERRAIN_LAYOUT[terrainIndex++];
-    }
-  }
-
   const terrainColors = {
     wood: "#78a96b",
     brick: "#c87962",
@@ -340,22 +329,80 @@ function createBoard(mapSize = 2) {
     desert: "#d6bd8a"
   };
 
+  const hexCount = 1 + 3 * radius * (radius + 1);
+  const resourceHexCount = hexCount - 1;
+  const resourceWeights = RESOURCE_TYPES.map(resource => ({
+    resource,
+    weight: TERRAIN_LAYOUT.filter(([terrain]) => terrain === resource).length
+  }));
+  const totalResourceWeight = resourceWeights.reduce(
+    (total, entry) => total + entry.weight,
+    0
+  );
+  const terrainCounts = resourceWeights.map(entry => ({
+    resource: entry.resource,
+    count: Math.max(
+      1,
+      Math.floor(resourceHexCount * entry.weight / totalResourceWeight)
+    ),
+    target: resourceHexCount * entry.weight / totalResourceWeight
+  }));
+  let assignedResourceHexes = terrainCounts.reduce(
+    (total, entry) => total + entry.count,
+    0
+  );
+
+  while (assignedResourceHexes < resourceHexCount) {
+    const mostUnderrepresented = Math.min(
+      ...terrainCounts.map(entry => entry.count - entry.target)
+    );
+    const candidates = terrainCounts.filter(
+      entry => entry.count - entry.target === mostUnderrepresented
+    );
+    const selected = candidates[
+      Math.floor(Math.random() * candidates.length)
+    ];
+    selected.count++;
+    assignedResourceHexes++;
+  }
+
+  while (assignedResourceHexes > resourceHexCount) {
+    const mostOverrepresented = Math.max(
+      ...terrainCounts
+        .filter(entry => entry.count > 1)
+        .map(entry => entry.count - entry.target)
+    );
+    const candidates = terrainCounts.filter(
+      entry => entry.count > 1 &&
+        entry.count - entry.target === mostOverrepresented
+    );
+    const selected = candidates[
+      Math.floor(Math.random() * candidates.length)
+    ];
+    selected.count--;
+    assignedResourceHexes--;
+  }
+
+  const terrainPool = terrainCounts.flatMap(({ resource, count }) =>
+    Array(count).fill([resource, terrainColors[resource]])
+  );
+  terrainPool.push(["desert", terrainColors.desert]);
+
+  for (let index = terrainPool.length - 1; index > 0; index--) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [terrainPool[index], terrainPool[randomIndex]] =
+      [terrainPool[randomIndex], terrainPool[index]];
+  }
+
   const numberOptions = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
+  let terrainIndex = 0;
 
   for (let q = -radius; q <= radius; q++) {
     for (let r = -radius; r <= radius; r++) {
       const s = -q - r;
       if (Math.abs(s) > radius) continue;
 
-      let terrain = baseTerrain[`${q},${r}`];
-
-      if (!terrain) {
-        const type = RESOURCE_TYPES[
-          Math.floor(Math.random() * RESOURCE_TYPES.length)
-        ];
-
-        terrain = [type, terrainColors[type]];
-      }
+      const terrain = terrainPool[terrainIndex++];
 
       const number = terrain[0] === "desert"
         ? 0
@@ -432,11 +479,92 @@ function createBoard(mapSize = 2) {
     vertices[edge.b].edges.push(edge.id);
   });
 
-  return {
+  const ports = generateBoardPorts({
     cells,
     verts: vertices,
     edges: roadEdges
+  }, mapSize);
+
+  return {
+    cells,
+    verts: vertices,
+    edges: roadEdges,
+    ports
   };
+}
+
+function generateBoardPorts(board, mapSize = 2) {
+  if (!board?.cells || !board.verts || !board.edges) return [];
+
+  const cellsByEdge = {};
+  board.cells.forEach(cell => {
+    cell.edges.forEach(edgeId => {
+      (cellsByEdge[edgeId] ||= []).push(cell);
+    });
+  });
+
+  const coastalEdges = Object.values(board.edges)
+    .filter(edge => cellsByEdge[edge.id]?.length === 1)
+    .map(edge => {
+      const a = board.verts[edge.a];
+      const b = board.verts[edge.b];
+
+      return {
+        edge,
+        angle: Math.atan2((a.y + b.y) / 2 - 300, (a.x + b.x) / 2 - 380)
+      };
+    })
+    .sort((a, b) => a.angle - b.angle);
+
+  if (coastalEdges.length === 0) return [];
+
+  const portCount = Math.min(
+    Math.max(3, Math.floor(coastalEdges.length / 3)),
+    Number(mapSize) === 2 ? 9 : Infinity
+  );
+  const specializedCount = Math.min(RESOURCE_TYPES.length, portCount);
+  const generalPortCount = Math.min(
+    Math.round(portCount * 0.4),
+    portCount - specializedCount
+  );
+  const portTypes = Array(generalPortCount).fill("general");
+  const specializedResources = RESOURCE_TYPES.slice();
+
+  for (let index = specializedResources.length - 1; index > 0; index--) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [specializedResources[index], specializedResources[randomIndex]] =
+      [specializedResources[randomIndex], specializedResources[index]];
+  }
+
+  for (let index = 0; index < portCount - generalPortCount; index++) {
+    portTypes.push(specializedResources[index % specializedResources.length]);
+  }
+
+  for (let index = portTypes.length - 1; index > 0; index--) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [portTypes[index], portTypes[randomIndex]] =
+      [portTypes[randomIndex], portTypes[index]];
+  }
+
+  const coastalOffset = Math.floor(Math.random() * coastalEdges.length);
+
+  return portTypes.map((resource, index) => {
+    const coastalIndex =
+      (coastalOffset + Math.floor(index * coastalEdges.length / portCount)) %
+      coastalEdges.length;
+    const { edge } = coastalEdges[coastalIndex];
+
+    return {
+      id: edge.id,
+      vertices: [edge.a, edge.b],
+      resource: resource === "general" ? null : resource,
+      rate: resource === "general" ? 3 : 2
+    };
+  });
+}
+
+function getBoardCellKey(cell) {
+  return `${cell.q},${cell.r}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -474,8 +602,7 @@ function createNewGameState(code, name, config = {}) {
     pieces: {
       road: 0,
       settlement: 0,
-      city: 0,
-      port: 0
+      city: 0
     },
     dev: [],
     points: 0
@@ -497,10 +624,15 @@ function createNewGameState(code, name, config = {}) {
     setupSettlement: null,
     rolled: false,
     dice: null,
+    resourceHighlightHexIds: [],
+    resourceHighlightUntil: 0,
     board,
+    robberHexId: getBoardCellKey(
+      board.cells.find(cell => cell.terrain === "desert") || board.cells[0]
+    ),
+    robberMovePending: false,
     roads: {},
     buildings: {},
-    ports: {},
     logs: [`${player.name} founded room ${code}.`],
     winner: null,
     round: 0
@@ -527,8 +659,31 @@ function normalizeRoomState(s) {
 
   s.roads = s.roads && typeof s.roads === "object" ? s.roads : {};
   s.buildings = s.buildings && typeof s.buildings === "object" ? s.buildings : {};
-  s.ports = s.ports && typeof s.ports === "object" ? s.ports : {};
   s.logs = Array.isArray(s.logs) ? s.logs : Object.values(s.logs || {});
+
+  if (s.board && !Array.isArray(s.board.ports)) {
+    s.board.ports = generateBoardPorts(s.board, s.mapSize);
+  }
+
+  if (s.board?.cells?.length) {
+    const robberCellExists = s.board.cells.some(
+      cell => getBoardCellKey(cell) === s.robberHexId
+    );
+    if (!robberCellExists) {
+      const startingCell = s.board.cells.find(cell => cell.terrain === "desert") ||
+        s.board.cells[0];
+      s.robberHexId = getBoardCellKey(startingCell);
+    }
+  }
+  if (typeof s.robberMovePending !== "boolean") {
+    s.robberMovePending = false;
+  }
+  if (!Array.isArray(s.resourceHighlightHexIds)) {
+    s.resourceHighlightHexIds = [];
+  }
+  if (!Number.isFinite(s.resourceHighlightUntil)) {
+    s.resourceHighlightUntil = 0;
+  }
 
   if (s.board?.verts) {
     for (const vertex of Object.values(s.board.verts)) {
@@ -558,7 +713,7 @@ function normalizeRoomState(s) {
       ? player.pieces
       : {};
 
-    for (const piece of ["road", "settlement", "city", "port"]) {
+    for (const piece of ["road", "settlement", "city"]) {
       if (!Number.isFinite(player.pieces[piece])) {
         player.pieces[piece] = 0;
       }
@@ -717,6 +872,13 @@ function updateStatus() {
       active?.id === currentPlayerId
         ? `Opening placement ${state.setupIndex + 1}/${state.setupOrder.length} · Your turn to ${action}`
         : `Opening placement ${state.setupIndex + 1}/${state.setupOrder.length} · ${active?.name} to ${action}`;
+  } else if (state.robberMovePending) {
+    SendLocalToast("You rolled a 7! Move the robber to a new hex and steal a resource from an adjacent player.", "info");
+
+    getElementById("turnText").textContent =
+      active?.id === currentPlayerId
+        ? "Your turn — choose a hex to move the robber"
+        : `${active?.name} is moving the robber`;
   } else {
     getElementById("turnText").textContent =
       active?.id === currentPlayerId
@@ -742,9 +904,11 @@ function updateStatus() {
     !isPlayersTurn() || state.phase !== "play" || state.rolled;
 
   getElementById("endBtn").disabled =
-    !isPlayersTurn() || state.phase !== "play" || !state.rolled;
+    !isPlayersTurn() || state.phase !== "play" || !state.rolled ||
+    state.robberMovePending;
 
-  getElementById("openTradeBtn").disabled = !isPlayersTurn() || !state.rolled
+  getElementById("openTradeBtn").disabled =
+    !isPlayersTurn() || !state.rolled || state.robberMovePending;
 
   const player = getLocalPlayer();
   document.querySelectorAll(".modeBtn").forEach(modeButton => {
@@ -759,6 +923,7 @@ function updateStatus() {
         (!isPlayersTurn() ||
           state.phase !== "play" ||
           !state.rolled ||
+          state.robberMovePending ||
           !player ||
           !hasResourcesNeeded(player, BUILDING_COSTS[btnmode]));
     }
@@ -828,7 +993,7 @@ function renderGameBoard() {
 
   state.roads ||= {};
   state.buildings ||= {};
-  state.ports ||= {};
+  const piecesLayer = svgEl("g", { class: "board-pieces" });
 
   board.cells.forEach(cell => {
     const points = cell.verts.map(id =>
@@ -838,7 +1003,12 @@ function renderGameBoard() {
     const polygon = svgEl("polygon", {
       points,
       fill: cell.color,
-      class: "hex"
+      class: `hex${
+        state.resourceHighlightUntil > Date.now() &&
+        state.resourceHighlightHexIds.includes(getBoardCellKey(cell))
+          ? " hex-resource-highlight"
+          : ""
+      }`
     });
 
     polygon.addEventListener("click", () => {});
@@ -900,7 +1070,7 @@ function renderGameBoard() {
     const road = state.roads[edge.id];
 
     if (road) {
-      svg.append(svgEl("line", {
+      piecesLayer.append(svgEl("line", {
         x1: a.x,
         y1: a.y,
         x2: b.x,
@@ -923,7 +1093,7 @@ function renderGameBoard() {
       });
 
       hit.addEventListener("click", () => buildOnBoard("road", edge.id));
-      svg.append(hit);
+      piecesLayer.append(hit);
     }
   });
 
@@ -935,7 +1105,7 @@ function renderGameBoard() {
       const fill = owner?.color || "#fff";
 
       if (building.type === "city") {
-        svg.append(svgEl("rect", {
+        piecesLayer.append(svgEl("rect", {
           x: vertex.x - 12,
           y: vertex.y - 17,
           width: 24,
@@ -945,13 +1115,13 @@ function renderGameBoard() {
           class: "settlement"
         }));
 
-        svg.append(svgEl("path", {
+        piecesLayer.append(svgEl("path", {
           d: `M${vertex.x - 15} ${vertex.y - 17} L${vertex.x} ${vertex.y - 30} L${vertex.x + 15} ${vertex.y - 17} Z`,
           fill,
           class: "settlement"
         }));
       } else {
-        svg.append(svgEl("polygon", {
+        piecesLayer.append(svgEl("polygon", {
           points: `${vertex.x},${vertex.y - 15} ${vertex.x - 12},${vertex.y + 7} ${vertex.x + 12},${vertex.y + 7}`,
           fill,
           class: "settlement"
@@ -959,7 +1129,7 @@ function renderGameBoard() {
       }
     }
 
-    if (["settlement", "city", "port"].includes(mode)) {
+    if (["settlement", "city"].includes(mode)) {
       const upgradeTarget =
         mode === "city" &&
         building?.owner === currentPlayerId &&
@@ -976,9 +1146,189 @@ function renderGameBoard() {
       });
 
       hit.addEventListener("click", () => buildOnBoard(mode, vertex.id));
-      svg.append(hit);
+      piecesLayer.append(hit);
     }
   });
+
+  const placedPortMarkers = [];
+  (board.ports || []).forEach(port => {
+    const portVertices = port.vertices.map(vertexId => board.verts[vertexId]);
+    if (portVertices.some(vertex => !vertex)) return;
+
+    const [a, b] = portVertices;
+    const midpoint = {
+      x: (a.x + b.x) / 2,
+      y: (a.y + b.y) / 2
+    };
+    const cell = board.cells.find(candidate =>
+      candidate.edges.includes(port.id)
+    );
+    if (!cell) return;
+
+    const cellCenter = cell.verts.reduce((center, vertexId) => ({
+      x: center.x + board.verts[vertexId].x / cell.verts.length,
+      y: center.y + board.verts[vertexId].y / cell.verts.length
+    }), { x: 0, y: 0 });
+    const normalX = midpoint.x - cellCenter.x;
+    const normalY = midpoint.y - cellCenter.y;
+    const normalLength = Math.hypot(normalX, normalY);
+    const normalUnitX = normalX / normalLength;
+    const normalUnitY = normalY / normalLength;
+    const tangentUnitX = -normalUnitY;
+    const tangentUnitY = normalUnitX;
+    let markerX;
+    let markerY;
+
+    for (const outwardDistance of [74, 86, 98]) {
+      for (const sideOffset of [0, -24, 24, -48, 48, -72, 72]) {
+        const candidateX =
+          midpoint.x + normalUnitX * outwardDistance + tangentUnitX * sideOffset;
+        const candidateY =
+          midpoint.y + normalUnitY * outwardDistance + tangentUnitY * sideOffset;
+        const inViewBox =
+          candidateX >= 38 && candidateX <= 722 &&
+          candidateY >= 28 && candidateY <= 582;
+        const overlaps = placedPortMarkers.some(placed =>
+          Math.abs(candidateX - placed.x) < 52 &&
+          Math.abs(candidateY - placed.y) < 58
+        );
+
+        if (inViewBox && !overlaps) {
+          markerX = candidateX;
+          markerY = candidateY;
+          break;
+        }
+      }
+
+      if (markerX !== undefined) break;
+    }
+
+    if (markerX === undefined) {
+      markerX = midpoint.x + normalUnitX * 74;
+      markerY = midpoint.y + normalUnitY * 74;
+    }
+    placedPortMarkers.push({ x: markerX, y: markerY });
+
+    portVertices.forEach(vertex => {
+      const directionX = vertex.x - markerX;
+      const directionY = vertex.y - markerY;
+      const edgeScale = Math.min(
+        21 / Math.abs(directionX || Number.EPSILON),
+        28 / Math.abs(directionY || Number.EPSILON)
+      );
+      const connectorX = markerX + directionX * edgeScale;
+      const connectorY = markerY + directionY * edgeScale;
+
+      svg.append(svgEl("line", {
+        x1: vertex.x,
+        y1: vertex.y,
+        x2: connectorX,
+        y2: connectorY,
+        class: "port-connection-outline"
+      }));
+      svg.append(svgEl("line", {
+        x1: vertex.x,
+        y1: vertex.y,
+        x2: connectorX,
+        y2: connectorY,
+        class: "port-connection"
+      }));
+    });
+
+    const ownerBuilding = port.vertices
+      .map(vertexId => state.buildings[vertexId])
+      .find(building => building);
+    const owner = ownerBuilding &&
+      state.players.find(player => player.id === ownerBuilding.owner);
+    const resourceLabel = port.resource
+      ? RESOURCE_DETAILS[port.resource]?.[0] || "?"
+      : "?";
+    const description = port.resource
+      ? `${RESOURCE_DETAILS[port.resource][1]} port — trade 2 ${RESOURCE_DETAILS[port.resource][1]} for 1 random resource.`
+      : "General port — trade 3 of any one resource for 1 of another.";
+    const marker = svgEl("g", {
+      class: `port-marker${owner ? " port-unlocked" : ""}`,
+      transform: `translate(${markerX} ${markerY})`
+    });
+    marker.append(svgEl("title", {}, `${description} Place a settlement on either connected coastal intersection to unlock it.`));
+    marker.append(svgEl("path", {
+      d: "M-13 -19 Q1 -17 15 -13 L13 13 Q0 8 -13 12 Z",
+      class: "port-sail-cloth",
+      stroke: owner?.color || "#83aab3"
+    }));
+    marker.append(svgEl("line", {
+      x1: -15,
+      y1: -23,
+      x2: -15,
+      y2: 20,
+      class: "port-sail-mast"
+    }));
+    marker.append(svgEl("path", {
+      d: "M-14 -23 L-3 -23 L-6 -20 L-3 -17 L-14 -17 Z",
+      class: "port-pennant"
+    }));
+    marker.append(svgEl("text", {
+      x: 0,
+      y: -5,
+      class: "port-resource"
+    }, resourceLabel));
+    marker.append(svgEl("text", {
+      x: 0,
+      y: 7,
+      class: "port-rate"
+    }, `${port.rate}:1`));
+    marker.append(svgEl("path", {
+      d: "M-19 18 Q0 22 19 18 L12 25 Q0 28 -12 25 Z",
+      class: "port-hull"
+    }));
+    svg.append(marker);
+  });
+
+  const robberCell = board.cells.find(
+    cell => getBoardCellKey(cell) === state.robberHexId
+  );
+  if (robberCell) {
+    const center = robberCell.verts.reduce((position, vertexId) => ({
+      x: position.x + board.verts[vertexId].x / robberCell.verts.length,
+      y: position.y + board.verts[vertexId].y / robberCell.verts.length
+    }), { x: 0, y: 0 });
+    const robberMarker = svgEl("g", {
+      class: "robber-marker",
+      "pointer-events": "none"
+    });
+    robberMarker.append(svgEl("circle", {
+      cx: center.x,
+      cy: center.y + 5,
+      r: 21,
+      class: "robber-shadow"
+    }));
+    robberMarker.append(svgEl("text", {
+      x: center.x,
+      y: center.y + 7,
+      class: "robber-icon"
+    }, "🗿"));
+    robberMarker.append(svgEl("title", {}, "The robber blocks this hex from producing resources."));
+    svg.append(robberMarker);
+  }
+
+  svg.append(piecesLayer);
+
+  if (state.robberMovePending && isPlayersTurn()) {
+    const targetsLayer = svgEl("g", { class: "robber-targets" });
+    board.cells.forEach(cell => {
+      const target = svgEl("polygon", {
+        points: cell.verts.map(vertexId => {
+          const vertex = board.verts[vertexId];
+          return `${vertex.x},${vertex.y}`;
+        }).join(" "),
+        "data-cell-id": getBoardCellKey(cell),
+        class: "robber-target"
+      });
+      target.addEventListener("click", () => moveRobberToHex(cell));
+      targetsLayer.append(target);
+    });
+    svg.append(targetsLayer);
+  }
 
   getElementById("board").style.cursor =
     mode === "select" ? "default" : "crosshair";
@@ -1017,6 +1367,26 @@ function renderGame() {
     button.style.borderColor =
       button.dataset.mode === mode ? "var(--accent)" : "";
   });
+
+  scheduleResourceHighlightExpiry();
+}
+
+function scheduleResourceHighlightExpiry() {
+  const highlightUntil = state?.resourceHighlightUntil || 0;
+  if (resourceHighlightTimerUntil === highlightUntil) return;
+
+  clearTimeout(resourceHighlightTimer);
+  resourceHighlightTimer = null;
+  resourceHighlightTimerUntil = highlightUntil;
+
+  const delay = highlightUntil - Date.now();
+  if (delay <= 0) return;
+
+  resourceHighlightTimer = setTimeout(() => {
+    resourceHighlightTimer = null;
+    resourceHighlightTimerUntil = 0;
+    renderGame();
+  }, delay);
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,6 +1422,14 @@ function hasAdjacentRoad(vertexId, owner) {
 
   return vertex.edges.some(edgeId =>
     state.roads[edgeId]?.owner === owner
+  );
+}
+
+function getPortsOwnedBy(playerId) {
+  return (state?.board?.ports || []).filter(port =>
+    port.vertices.some(vertexId =>
+      state.buildings[vertexId]?.owner === playerId
+    )
   );
 }
 
@@ -1180,6 +1558,10 @@ function placeOpeningPiece(type, id) {
 function buildOnBoard(type, id) {
   if (!state || state.winner) return;
 
+  if (state.robberMovePending) {
+    return SendLocalToast("Move the robber before taking another action.");
+  }
+
   if (state.phase === "lobby") {
     return SendLocalToast("Wait for the host to start the opening placements.");
   }
@@ -1277,38 +1659,6 @@ function buildOnBoard(type, id) {
 
     SendGlobalToast(`${player.name} upgraded a settlement to a city.`, "info");
 
-  } else if (type === "port") {
-    const vertex = board.verts[id];
-    const adjacentCellCount = board.cells.filter(cell =>
-      cell.verts.includes(id)
-    ).length;
-
-    const coastal = adjacentCellCount < 3;
-
-    if (!coastal) {
-      return SendLocalToast("Ports can only be built on coastal intersections.");
-    }
-
-    if (state.buildings[id]) {
-      return SendLocalToast("That intersection is occupied.");
-    }
-
-    if (!hasAdjacentRoad(id, player.id)) {
-      return SendLocalToast("A port needs to connect to your road network.");
-    }
-
-    if (!payResourceCost(player, BUILDING_COSTS.port)) {
-      return SendLocalToast("Not enough resources for a port.");
-    }
-
-    state.ports[id] = {
-      owner: player.id,
-      rate: 3
-    };
-
-    player.pieces.port++;
-
-    SendGlobalToast(`${player.name} built a port (3:1 trade).`, "success");
   }
 
   if (player.points >= (state.victoryPointsNeeded || 10)) {
@@ -1340,6 +1690,17 @@ function rollDice() {
   state.rolled = true;
   state.round++;
 
+  const producingCells = total === 7
+    ? []
+    : state.board.cells.filter(cell =>
+      Number(cell.number) === total &&
+      getBoardCellKey(cell) !== state.robberHexId
+    );
+  state.resourceHighlightHexIds = producingCells.map(getBoardCellKey);
+  state.resourceHighlightUntil = producingCells.length
+    ? Date.now() + 1500
+    : 0;
+
   const gains = Object.fromEntries(
     state.players.map(player => [
       player.id,
@@ -1348,7 +1709,7 @@ function rollDice() {
   );
 
   if (total !== 7) {
-    for (const cell of state.board.cells.filter(cell => cell.number === total)) {
+    for (const cell of producingCells) {
       for (const vertexId of cell.verts) {
         const building = state.buildings[vertexId];
         if (!building) continue;
@@ -1401,7 +1762,8 @@ function rollDice() {
     }
 
   } else {
-    const message = `${roller.name} rolled 7. No resources were distributed.`;
+    state.robberMovePending = true;
+    const message = `${roller.name} rolled 7 and must move the robber.`;
 
     state.logs.push(message);
     state.logs = state.logs.slice(-70);
@@ -1418,7 +1780,12 @@ function rollDice() {
 // ---------------------------------------------------------------------------
 
 async function endCurrentTurn() {
-  if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) return;
+  if (
+    !isPlayersTurn() ||
+    state.phase !== "play" ||
+    !state.rolled ||
+    state.robberMovePending
+  ) return;
 
   state.turn = (state.turn + 1) % state.players.length;
   state.rolled = false;
@@ -1440,39 +1807,67 @@ async function endCurrentTurn() {
   renderGame();
 }
 
-// ---------------------------------------------------------------------------
-// TRADING
-// ---------------------------------------------------------------------------
+function moveRobberToHex(cell) {
+  if (
+    !state ||
+    !state.robberMovePending ||
+    !isPlayersTurn() ||
+    state.phase !== "play" ||
+    !state.rolled
+  ) return;
 
-function tradeResources() {
-  if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) return;
-
-  const player = getLocalPlayer();
-  const give = getElementById("giveResource").value;
-  const get = getElementById("getResource").value;
-
-  if (give === get) {
-    return SendLocalToast("Choose two different resources.");
+  const destinationId = getBoardCellKey(cell);
+  if (destinationId === state.robberHexId) {
+    return SendLocalToast("Choose a different hex for the robber.");
   }
 
-  const rate = Object.values(state.ports).some(port =>
-    port.owner === player.id
-  ) ? 3 : 4;
+  const player = getCurrentPlayer();
+  state.robberHexId = destinationId;
+  state.robberMovePending = false;
 
-  if (player.res[give] < rate) {
-    return SendLocalToast(
-      `You need ${rate} ${RESOURCE_DETAILS[give][1]} to trade.`
-    );
-  }
-
-  player.res[give] -= rate;
-  player.res[get]++;
-
-  SendGlobalToast(
-    `${player.name} traded ${rate} ${RESOURCE_DETAILS[give][1]} for 1 ${RESOURCE_DETAILS[get][1]}.`,
-    "success"
+  const attachedPlayerIds = new Set(
+    cell.verts
+      .map(vertexId => state.buildings[vertexId]?.owner)
+      .filter(ownerId => ownerId && ownerId !== player.id)
   );
+  const victims = state.players.filter(candidate =>
+    attachedPlayerIds.has(candidate.id) &&
+    RESOURCE_TYPES.some(resource => candidate.res[resource] > 0)
+  );
+  let theftDescription = "No opponent with resources had a building on that hex.";
 
+  if (victims.length) {
+    const victim = victims[Math.floor(Math.random() * victims.length)];
+    const totalCards = RESOURCE_TYPES.reduce(
+      (total, resource) => total + victim.res[resource],
+      0
+    );
+    let cardIndex = Math.floor(Math.random() * totalCards);
+    const stolenResource = RESOURCE_TYPES.find(resource => {
+      cardIndex -= victim.res[resource];
+      return cardIndex < 0;
+    });
+
+    SendLocalToast(`You stole 1 ${RESOURCE_DETAILS[stolenResource][1]} from ${victim.name}.`, "success");
+    SendGlobalToast(`${player.name} stole 1 ${RESOURCE_DETAILS[stolenResource][1]} from you.`, "warning", victim.id);
+
+    victim.res[stolenResource]--;
+    player.res[stolenResource]++;
+    theftDescription =
+      `${player.name} stole 1 ${RESOURCE_DETAILS[stolenResource][1]} from ${victim.name}.`;
+  }
+
+  const message = `${player.name} moved the robber to the ${cell.terrain} hex. ${theftDescription}`;
+  state.logs.push(message);
+  state.logs = state.logs.slice(-70);
+
+  if (victims.length) {
+    SendLocalToast(`Robber moved. ${theftDescription}`, "success");
+  } else {
+    SendLocalToast(`Robber moved. ${theftDescription}`, "info");
+  }
+
+  SendGlobalToast(message, victims.length ? "warning" : "info");
   synchronizeRoomState();
   renderGame();
 }
@@ -1482,7 +1877,12 @@ function tradeResources() {
 // ---------------------------------------------------------------------------
 
 function buyDevelopmentCard() {
-  if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) return;
+  if (
+    !isPlayersTurn() ||
+    state.phase !== "play" ||
+    !state.rolled ||
+    state.robberMovePending
+  ) return;
 
   const player = getLocalPlayer();
 
@@ -1518,16 +1918,16 @@ function showGameRules() {
   alert(
     "COLONISTS — QUICK RULES\n\n" +
     "Turn: roll 2 dice, collect resources, then build/trade.\n\n" +
+    "Robber: rolling a 7 lets you move the robber from the desert to another hex. That hex stops producing resources, and you steal one random resource from an opponent with a settlement or city there.\n\n" +
     "Costs:\n" +
     "Road: 1 wood + 1 brick\n" +
     "Settlement: 1 wood + 1 brick + 1 wool + 1 grain\n" +
     "City upgrade: 3 ore + 2 grain\n" +
-    "Port: 2 wood + 2 brick + 1 ore\n" +
     "Development card: 1 wool + 1 grain + 1 ore\n\n" +
     "Settlements: connect to your road network, and keep one intersection empty between settlements.\n" +
     "Roads: must connect to your own road/building.\n" +
     "Cities: upgrade your own settlement.\n" +
-    "Ports: coastal intersection, connected to your road network; grants 3:1 trade.\n\n" +
+    "Ports: settle either connected coastal intersection to unlock a general port (3 of any one resource for 1 of another) or a resource port (2 of its resource for 1 random different resource).\n\n" +
     "First to the configured victory-point target wins. This is an original fan-made game inspired by classic hex-tile trading games, not an official adaptation."
   );
 }
@@ -1692,9 +2092,24 @@ function renderTradeBuilder() {
     const hasWant = RESOURCE_TYPES.some(
         resource => (tradeSelection.want[resource] || 0) > 0
     );
+    const portTradeResource = getSpecificPortTradeResource(
+        player,
+        tradeSelection.offer
+    );
 
     getElementById("sendTradeBtn").disabled = !hasOffer || !hasWant;
-    getElementById("bankTradeBtn").disabled = !hasOffer || !hasWant;
+    getElementById("bankTradeBtn").disabled =
+        !hasOffer || (!hasWant && !portTradeResource);
+    getElementById("bankTradeBtn").textContent = portTradeResource
+        ? "Trade 2 for random"
+        : "Trade with bank";
+
+    if (portTradeResource) {
+        getElementById("tradeSummary").insertAdjacentHTML(
+            "beforeend",
+            `<div class="trade-port-hint">Port trade: 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 random resource</div>`
+        );
+    }
 }
 
 function changeTradeSelection(side, resource, change) {
@@ -1736,51 +2151,114 @@ function hasTradeCards(cards) {
     );
 }
 
+function getSpecificPortTradeResource(player, offer) {
+    const offeredTypes = RESOURCE_TYPES.filter(
+        resource => (offer[resource] || 0) > 0
+    );
+    const totalOffered = offeredTypes.reduce(
+        (total, resource) => total + offer[resource],
+        0
+    );
+
+    if (offeredTypes.length !== 1 || totalOffered !== 2) return null;
+
+    const resource = offeredTypes[0];
+    return getPortsOwnedBy(player.id).some(port => port.resource === resource)
+        ? resource
+        : null;
+}
+
+function getBankTradeRate(player, resource) {
+    const ports = getPortsOwnedBy(player.id);
+
+    if (ports.some(port => port.resource === resource)) return 2;
+    if (ports.some(port => port.resource === null)) return 3;
+    return 4;
+}
+
 // ---------------------------------------------------------------------------
 // BANK TRADING
 // ---------------------------------------------------------------------------
 
 function tradeWithBank() {
-    if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) {
+    if (
+        !isPlayersTurn() ||
+        state.phase !== "play" ||
+        !state.rolled ||
+        state.robberMovePending
+    ) {
         return SendLocalToast("You can only trade during your turn, after rolling.");
     }
 
     const player = getLocalPlayer();
     const offer = tradeSelection.offer;
     const want = tradeSelection.want;
+    const portTradeResource = getSpecificPortTradeResource(player, offer);
 
-    if (!hasTradeCards(offer) || !hasTradeCards(want)) {
+    if (!hasTradeCards(offer)) {
         return SendLocalToast("Choose the cards you want to exchange.");
     }
-
-    // -- // Bank trades only allow one resource type in each direction
 
     const offeredTypes = RESOURCE_TYPES.filter(
         resource => (offer[resource] || 0) > 0
     );
 
+    if (offeredTypes.length !== 1) {
+        return SendLocalToast(
+            "Bank trades must exchange one resource type at a time."
+        );
+    }
+
+    const give = offeredTypes[0];
+
+    if (portTradeResource) {
+        if (!canAffordTrade(player, offer)) {
+            return SendLocalToast("You don't have enough resources.");
+        }
+
+        const receivedResources = RESOURCE_TYPES.filter(
+            resource => resource !== portTradeResource
+        );
+        const get = receivedResources[
+            Math.floor(Math.random() * receivedResources.length)
+        ];
+
+        player.res[portTradeResource] -= 2;
+        player.res[get]++;
+
+        state.logs.push(
+            `${player.name} traded 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 random ${RESOURCE_DETAILS[get][1]} at a port.`
+        );
+        state.logs = state.logs.slice(-70);
+
+        SendLocalToast(
+            `Port trade completed! 2 ${RESOURCE_DETAILS[portTradeResource][1]} exchanged for 1 random ${RESOURCE_DETAILS[get][1]}.`,
+            "success"
+        );
+
+        resetTradeSelection();
+        synchronizeRoomState();
+        renderGame();
+        return;
+    }
+
     const wantedTypes = RESOURCE_TYPES.filter(
         resource => (want[resource] || 0) > 0
     );
 
-    if (offeredTypes.length !== 1 || wantedTypes.length !== 1) {
+    if (wantedTypes.length !== 1) {
         return SendLocalToast(
             "Bank trades must exchange one resource type for another."
         );
     }
 
-    const give = offeredTypes[0];
     const get = wantedTypes[0];
 
     if (give === get) {
         return SendLocalToast("Choose two different resources.");
     }
 
-    const hasPort = Object.values(state.ports).some(
-        port => port.owner === player.id
-    );
-
-    const rate = hasPort ? 3 : 4;
+    const rate = getBankTradeRate(player, give);
 
     if (offer[give] !== rate || want[get] !== 1) {
         return SendLocalToast(
@@ -1824,7 +2302,12 @@ async function sendTradeRequest() {
         );
     }
 
-    if (!isPlayersTurn() || state.phase !== "play" || !state.rolled) {
+    if (
+        !isPlayersTurn() ||
+        state.phase !== "play" ||
+        !state.rolled ||
+        state.robberMovePending
+    ) {
         return SendLocalToast(
             "You can only trade during your turn, after rolling."
         );
@@ -2489,8 +2972,7 @@ async function joinOnlineRoom() {
       pieces: {
         road: 0,
         settlement: 0,
-        city: 0,
-        port: 0
+        city: 0
       },
       dev: [],
       points: 0
