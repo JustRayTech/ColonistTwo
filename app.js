@@ -1107,7 +1107,7 @@ function renderGameBoard() {
       if (building.type === "city") {
         piecesLayer.append(svgEl("rect", {
           x: vertex.x - 12,
-          y: vertex.y - 17,
+          y: vertex.y - 7,
           width: 24,
           height: 20,
           rx: 3,
@@ -1116,7 +1116,7 @@ function renderGameBoard() {
         }));
 
         piecesLayer.append(svgEl("path", {
-          d: `M${vertex.x - 15} ${vertex.y - 17} L${vertex.x} ${vertex.y - 30} L${vertex.x + 15} ${vertex.y - 17} Z`,
+          d: `M${vertex.x - 15} ${vertex.y - 7} L${vertex.x} ${vertex.y - 20} L${vertex.x + 15} ${vertex.y - 7} Z`,
           fill,
           class: "settlement"
         }));
@@ -2085,7 +2085,7 @@ function renderTradeBuilder() {
     if (portTradeResource) {
         getElementById("tradeSummary").insertAdjacentHTML(
             "beforeend",
-            `<div class="trade-port-hint">Port trade: 2 ${RESOURCE_DETAILS[portTradeResource][1]} for 1 resource you choose${validPortWant ? ` — receive ${RESOURCE_DETAILS[wantedTypes[0]][0]} ${RESOURCE_DETAILS[wantedTypes[0]][1]}` : ""}</div>`
+            `<div class="trade-port-hint">Port trade: 2 ${RESOURCE_DETAILS[portTradeResource][1]} for ${validPortWant ? `${RESOURCE_DETAILS[wantedTypes[0]][0]} ${RESOURCE_DETAILS[wantedTypes[0]][1]}.` : "resource of your choice."}</div>`
         );
     }
 }
