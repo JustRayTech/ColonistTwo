@@ -468,6 +468,7 @@ function createNewGameState(code, name, config = {}) {
     points: 0
   };
 
+
   return {
     code,
     host: currentPlayerId,
@@ -612,6 +613,7 @@ function notify(message) {
 // STATUS AND RENDERING
 // ---------------------------------------------------------------------------
 
+var previousPlr = 1;
 function updateStatus() {
   if (!state) return;
 
@@ -624,9 +626,19 @@ function updateStatus() {
 
   if (state.phase == "play" && !state.rolled) {
     if (isPlayersTurn()) {
-      SendLocalToast("It's your turn, roll the dice or use a development card.", "success")
+      SendLocalToast("It's your turn, roll the dice or use a development card.", "info")
     }else{
       SendLocalToast(`It's ${active.name}'s turn to play.`, "NONE")
+    }
+  }
+
+  if (state.phase == "lobby") {
+    if (previousPlr != state.players.length) {
+      previousPlr = state.players.length
+
+      if (state.players[state.players.length - 1].id != currentPlayerId) {
+        SendLocalToast(`${state.players[state.players.length - 1].name || "Unknown"} has joined the room`, "success")
+      }
     }
   }
   
@@ -654,7 +666,7 @@ function updateStatus() {
       if (state.phase == "setup") {
         if (state.setupStep == "settlement") {
           if (state.setupIndex == 0) {
-            SendLocalToast(`Opening placements have started. ${active.name} is first.`, "info")
+            SendLocalToast(`Opening placements have started. ${active.name} is first.`, "NONE")
           }else{
             if (secondRound) {
               SendLocalToast(`It's ${active.name}'s turn to place their final settlement.`, "NONE")
@@ -669,6 +681,16 @@ function updateStatus() {
   if (state.winner) {
     getElementById("turnText").textContent = `${state.winner} wins!`;
   } else if (state.phase === "lobby") {
+
+    if (state.host == currentPlayerId) {
+      if (state.players.length == 1) {
+          SendLocalToast(
+          `Your room has been created! Invite other players using the code '${state.code}'.`,
+          "success"
+        );
+      }
+    }
+
     getElementById("turnText").textContent =
       state.host === currentPlayerId
         ? `Lobby · ${state.players.length}/${state.maxPlayers} players · start when everyone has joined`
@@ -1531,6 +1553,7 @@ async function createOnlineRoom() {
     sessionStorage.removeItem("colonistsLocalState");
 
     window.location.href = `game.html?room=${encodeURIComponent(roomCode)}`;
+
   } catch (error) {
     notify(error.message);
   }
@@ -1539,6 +1562,13 @@ async function createOnlineRoom() {
 function goToGameCreationPage() {
   const playerName =
     getElementById("nameInput").value.trim() || "Colonist";
+
+    let badWordList = ["kanker", "gay", "homo", "nigger", "nigga", "n!gga", "n!ga", "niga", "nigge", "n!gge", "nig", "n!g", "raym"]
+    let playerchosenName = getElementById("nameInput").value.trim().toLowerCase()
+    if (playerchosenName.length < 3) { return notify("Your player name must be at least 3 characters.")}
+    if (badWordList.some(word => playerchosenName.includes(word))) {
+      return notify("Opzouten")
+    }
 
   sessionStorage.setItem("lobbyCreatorName", playerName);
   window.location.href = "game_creation.html";
@@ -1559,6 +1589,13 @@ async function joinOnlineRoom() {
 
     if (!roomSnapshot.exists()) {
       return notify("Room not found. Check the code.");
+    }
+
+    let badWordList = ["kanker", "gay", "homo", "nigger", "nigga", "n!gga", "n!ga", "niga", "nigge", "n!gge", "nig", "n!g", "raym"]
+    let playerchosenName = getElementById("nameInput").value.trim().toLowerCase()
+    if (playerchosenName.length < 3) { return notify("Your player name must be at least 3 characters.")}
+    if (badWordList.some(word => playerchosenName.includes(word))) {
+      return notify("Opzouten")
     }
 
     const roomState = normalizeRoomState(roomSnapshot.val());
@@ -1601,6 +1638,7 @@ async function joinOnlineRoom() {
     roomState.players.push(newPlayer);
     roomState.logs.push(`${newPlayer.name} joined the room.`);
 
+
     await firebaseTools.set(roomDatabaseReference, roomState);
 
     sessionStorage.setItem("colonistsRoomCode", roomCode);
@@ -1610,6 +1648,8 @@ async function joinOnlineRoom() {
   } catch (error) {
     notify("Could not join room: " + error.message);
   }
+  
+  await SendGlobalToast(`${newPlayer.name} joined the room.`, "info")
 }
 
 function subscribeToRoomUpdates() {
@@ -1656,6 +1696,8 @@ function renderInitialGame() {
 
   getElementById("gameNoticeLocal")?.classList.add("hidden");
   getElementById("gameNoticeGlobal")?.classList.add("hidden");
+
+
 
   renderGame();
 }
