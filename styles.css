@@ -144,6 +144,10 @@ button:disabled {
     opacity:.38;
     cursor:not-allowed;
 }
+.sound-toggle {
+    min-width: 112px;
+    white-space: nowrap;
+}
 input {
     background:#0e1920;
     color:var(--ink);

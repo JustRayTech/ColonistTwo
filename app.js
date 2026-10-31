@@ -97,6 +97,317 @@ let handledOutgoingTradeResultId = null;
 let localToastTimer = null;
 let globalToastTimer = null;
 let lastGlobalToastId = null;
+let soundEnabled = true;
+let gameAudioContext = null;
+const SOUND_PREFERENCE_KEY = "colonistsSoundEnabled";
+
+try {
+  soundEnabled = localStorage.getItem(SOUND_PREFERENCE_KEY) !== "false";
+} catch (error) {
+  console.warn("Could not read the sound preference:", error);
+}
+
+function getGameAudioContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  if (!gameAudioContext) gameAudioContext = new AudioContextClass();
+  if (gameAudioContext.state === "suspended") {
+    gameAudioContext.resume().catch(error => {
+      console.warn("Could not resume game audio:", error);
+    });
+  }
+
+  return gameAudioContext;
+}
+
+function playSoundTone(context, frequency, start, duration, options = {}) {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const attack = Math.min(0.018, duration * 0.3);
+  const end = start + duration;
+
+  oscillator.type = options.type || "sine";
+  oscillator.frequency.setValueAtTime(frequency, start);
+  if (options.endFrequency) {
+    oscillator.frequency.exponentialRampToValueAtTime(
+      options.endFrequency,
+      end
+    );
+  }
+
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(options.volume || 0.045, start + attack);
+  gain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(end + 0.01);
+}
+
+function playSoundRattle(context, start, duration = 0.12, volume = 0.045) {
+  const sampleCount = Math.ceil(context.sampleRate * duration);
+  const buffer = context.createBuffer(1, sampleCount, context.sampleRate);
+  const samples = buffer.getChannelData(0);
+
+  for (let index = 0; index < sampleCount; index++) {
+    const fade = 1 - index / sampleCount;
+    samples[index] = (Math.random() * 2 - 1) * fade * fade;
+  }
+
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const gain = context.createGain();
+
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(1500, start);
+  gain.gain.setValueAtTime(volume, start);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+  source.buffer = buffer;
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(context.destination);
+  source.start(start);
+}
+
+function playGameSound(name) {
+  if (!soundEnabled) return;
+
+  const context = getGameAudioContext();
+  if (!context) return;
+
+  const now = context.currentTime + 0.01;
+  const tones = (notes, spacing = 0.075, duration = 0.16, options = {}) => {
+    notes.forEach((note, index) => {
+      playSoundTone(
+        context,
+        note,
+        now + index * spacing,
+        duration,
+        options
+      );
+    });
+  };
+
+  switch (name) {
+    case "click":
+      playSoundTone(context, 720, now, 0.045, {
+        endFrequency: 560,
+        type: "triangle",
+        volume: 0.022
+      });
+      break;
+    case "dice-roll":
+      [0, 0.075, 0.15, 0.23].forEach((offset, index) => {
+        playSoundRattle(context, now + offset, 0.11, 0.045 - index * 0.006);
+      });
+      playSoundTone(context, 185, now + 0.2, 0.11, {
+        endFrequency: 125,
+        type: "triangle",
+        volume: 0.05
+      });
+      break;
+    case "seven":
+      playSoundTone(context, 220, now, 0.48, {
+        endFrequency: 110,
+        type: "sawtooth",
+        volume: 0.055
+      });
+      playSoundTone(context, 164.81, now + 0.08, 0.42, {
+        endFrequency: 82,
+        type: "triangle",
+        volume: 0.035
+      });
+      break;
+    case "resource":
+      tones([659.25, 783.99, 987.77], 0.085, 0.17, {
+        type: "sine",
+        volume: 0.035
+      });
+      break;
+    case "build":
+      playSoundRattle(context, now, 0.09, 0.04);
+      playSoundRattle(context, now + 0.13, 0.12, 0.035);
+      playSoundTone(context, 220, now + 0.02, 0.13, {
+        endFrequency: 150,
+        type: "triangle",
+        volume: 0.045
+      });
+      break;
+    case "city":
+      playSoundRattle(context, now, 0.13, 0.04);
+      tones([392, 493.88, 587.33], 0.07, 0.25, {
+        type: "triangle",
+        volume: 0.035
+      });
+      break;
+    case "robber":
+      playSoundTone(context, 260, now, 0.42, {
+        endFrequency: 105,
+        type: "sawtooth",
+        volume: 0.04
+      });
+      playSoundRattle(context, now + 0.22, 0.16, 0.035);
+      break;
+    case "trade":
+      tones([523.25, 659.25, 783.99, 1046.5], 0.065, 0.16, {
+        type: "triangle",
+        volume: 0.035
+      });
+      break;
+    case "card":
+      playSoundTone(context, 440, now, 0.24, {
+        endFrequency: 880,
+        type: "sine",
+        volume: 0.04
+      });
+      playSoundTone(context, 659.25, now + 0.1, 0.2, {
+        endFrequency: 987.77,
+        type: "triangle",
+        volume: 0.03
+      });
+      break;
+    case "success":
+      tones([523.25, 659.25, 783.99], 0.09, 0.24, {
+        type: "sine",
+        volume: 0.04
+      });
+      break;
+    case "error":
+      playSoundTone(context, 190, now, 0.16, {
+        endFrequency: 125,
+        type: "triangle",
+        volume: 0.04
+      });
+      playSoundTone(context, 155, now + 0.19, 0.16, {
+        endFrequency: 105,
+        type: "triangle",
+        volume: 0.035
+      });
+      break;
+    case "turn":
+      tones([440, 587.33, 659.25], 0.09, 0.19, {
+        type: "sine",
+        volume: 0.03
+      });
+      break;
+    case "notification":
+      tones([740, 988], 0.09, 0.12, {
+        type: "sine",
+        volume: 0.025
+      });
+      break;
+  }
+}
+
+function updateSoundToggle() {
+  const button = getElementById("soundToggleBtn");
+  if (!button) return;
+
+  button.textContent = soundEnabled ? "🔊 Sound on" : "🔇 Sound off";
+  button.setAttribute("aria-pressed", String(soundEnabled));
+  button.title = soundEnabled
+    ? "Turn game sound effects off"
+    : "Turn game sound effects on";
+}
+
+function playRemoteGameSound(previous, next) {
+  if (!previous || !next) return;
+
+  if (previous.phase === "lobby" && next.phase === "setup") {
+    playGameSound("turn");
+    return;
+  }
+
+  if (!previous.winner && next.winner) {
+    playGameSound("success");
+    return;
+  }
+
+  if (previous.turn !== next.turn && next.phase === "play") {
+    playGameSound("turn");
+    return;
+  }
+
+  if (next.round > previous.round && next.dice?.length === 2) {
+    const total = next.dice[0] + next.dice[1];
+    playGameSound("dice-roll");
+    if (total === 7) {
+      setTimeout(() => playGameSound("seven"), 420);
+    } else {
+      const previousLocal = previous.players.find(
+        player => player.id === currentPlayerId
+      );
+      const nextLocal = next.players.find(
+        player => player.id === currentPlayerId
+      );
+      const resourceCount = player =>
+        RESOURCE_TYPES.reduce((sum, resource) => sum + player.res[resource], 0);
+
+      if (previousLocal && nextLocal &&
+          resourceCount(nextLocal) > resourceCount(previousLocal)) {
+        setTimeout(() => playGameSound("resource"), 360);
+      }
+    }
+    return;
+  }
+
+  if (next.robberHexId !== previous.robberHexId) {
+    playGameSound("robber");
+    return;
+  }
+
+  const previousBuildings = previous.buildings || {};
+  const nextBuildings = next.buildings || {};
+  const previousRoads = previous.roads || {};
+  const nextRoads = next.roads || {};
+  const changedPieces = Object.keys(nextBuildings).some(id =>
+    JSON.stringify(previousBuildings[id]) !== JSON.stringify(nextBuildings[id])
+  ) || Object.keys(previousRoads).some(id =>
+    JSON.stringify(previousRoads[id]) !== JSON.stringify(nextRoads[id])
+  );
+
+  if (changedPieces) {
+    const cityUpgrade = Object.entries(nextBuildings).some(([id, building]) =>
+      previousBuildings[id]?.type === "settlement" &&
+      building.type === "city"
+    );
+    playGameSound(cityUpgrade ? "city" : "build");
+    return;
+  }
+
+  const boughtCard = next.players.some(player => {
+    const previousPlayer = previous.players.find(
+      candidate => candidate.id === player.id
+    );
+    return previousPlayer && player.dev.length > previousPlayer.dev.length;
+  });
+  if (boughtCard) {
+    playGameSound("card");
+    return;
+  }
+
+  const resourcesChanged = next.players.some(player => {
+    const previousPlayer = previous.players.find(
+      candidate => candidate.id === player.id
+    );
+    return previousPlayer && RESOURCE_TYPES.some(
+      resource => player.res[resource] !== previousPlayer.res[resource]
+    );
+  });
+  if (resourcesChanged) {
+    playGameSound("trade");
+    return;
+  }
+
+  const previousLastLog = previous.logs?.[previous.logs.length - 1];
+  const nextLastLog = next.logs?.[next.logs.length - 1];
+  if (nextLastLog !== previousLastLog && /accepted a trade/i.test(nextLastLog || "")) {
+    playGameSound("trade");
+  }
+}
 
 // ---------------------------------------------------------------------------
 // ROOM UTILITIES
@@ -207,10 +518,13 @@ function SendLocalToast(message, type = null) {
 
   if (!box) return;
 
+  const kind = noticeKind(message, type);
+  if (kind === "error") playGameSound("error");
+
   clearTimeout(localToastTimer);
 
   box.textContent = message;
-  box.className = `game-notice ${noticeKind(message, type)}`;
+  box.className = `game-notice ${kind}`;
 
   localToastTimer = setTimeout(() => {
     box.classList.add("hidden");
@@ -265,6 +579,10 @@ function handleGlobalToast(toast) {
   if (!box) return;
 
   lastGlobalToastId = toast.id;
+  const message = toast.message.toLowerCase();
+  if (!/rolled 7|from the roll|moved the robber|stole 1|built a road|built a settlement|upgraded a settlement|trade/.test(message)) {
+    playGameSound("notification");
+  }
 
   clearTimeout(globalToastTimer);
 
@@ -1437,6 +1755,7 @@ function placeOpeningPiece(type, id) {
 
     player.pieces.settlement++;
     player.points++;
+    playGameSound("build");
     state.setupSettlement = id;
     state.setupStep = "road";
 
@@ -1490,6 +1809,7 @@ function placeOpeningPiece(type, id) {
     };
 
     player.pieces.road++;
+    playGameSound("build");
 
     state.logs.push(`${player.name} placed an opening road.`);
     state.logs = state.logs.slice(-70);
@@ -1628,6 +1948,8 @@ function buildOnBoard(type, id) {
 
   }
 
+  playGameSound(type === "city" ? "city" : "build");
+
   if (player.points >= (state.victoryPointsNeeded || 10)) {
     state.winner = player.name;
 
@@ -1652,6 +1974,10 @@ function rollDice() {
   const d1 = 1 + Math.floor(Math.random() * 6);
   const d2 = 1 + Math.floor(Math.random() * 6);
   const total = d1 + d2;
+  playGameSound("dice-roll");
+  if (total === 7) {
+    setTimeout(() => playGameSound("seven"), 420);
+  }
 
   state.dice = [d1, d2];
   state.rolled = true;
@@ -1691,6 +2017,11 @@ function rollDice() {
         player.res[resource] += amount;
         gains[player.id][resource] += amount;
       }
+    }
+
+    if (gains[currentPlayerId] &&
+        RESOURCE_TYPES.some(resource => gains[currentPlayerId][resource] > 0)) {
+      setTimeout(() => playGameSound("resource"), 360);
     }
 
     for (const player of state.players) {
@@ -1754,6 +2085,7 @@ async function endCurrentTurn() {
     state.robberMovePending
   ) return;
 
+  playGameSound("turn");
   state.turn = (state.turn + 1) % state.players.length;
   state.rolled = false;
   state.dice = null;
@@ -1788,6 +2120,7 @@ function moveRobberToHex(cell) {
     return SendLocalToast("Choose a different hex for the robber.");
   }
 
+  playGameSound("robber");
   const player = getCurrentPlayer();
   state.robberHexId = destinationId;
   state.robberMovePending = false;
@@ -1868,6 +2201,7 @@ function buyDevelopmentCard() {
   ][Math.floor(Math.random() * 5)];
 
   player.dev.push(card);
+  playGameSound("card");
 
   if (card === "Victory Point") player.points++;
 
@@ -2227,6 +2561,7 @@ function tradeWithBank() {
             `Port trade completed! 2 ${RESOURCE_DETAILS[portTradeResource][1]} exchanged for 1 ${RESOURCE_DETAILS[get][1]}.`,
             "success"
         );
+        playGameSound("trade");
 
         resetTradeSelection();
         synchronizeRoomState();
@@ -2275,6 +2610,7 @@ function tradeWithBank() {
         `Bank trade completed! ${rate} ${RESOURCE_DETAILS[give][1]} exchanged for 1 ${RESOURCE_DETAILS[get][1]}.`,
         "success"
     );
+    playGameSound("trade");
 
   resetTradeSelection();
 
@@ -2366,6 +2702,7 @@ async function sendTradeRequest() {
         await firebaseTools.set(tradeRef, request);
         outgoingTradeStatus = "pending";
         renderTradeMenu();
+        playGameSound("trade");
 
     } catch (error) {
         console.error("Trade request failed:", error);
@@ -2424,12 +2761,14 @@ function updateOutgoingTradeProgress() {
         handledOutgoingTradeResultId = outgoingTradeId;
         closeTradeMenu();
         SendLocalToast("You traded successfully!", "success");
+        playGameSound("success");
     } else if (
         request.status === "denied" &&
         handledOutgoingTradeResultId !== outgoingTradeId
     ) {
         handledOutgoingTradeResultId = outgoingTradeId;
         SendLocalToast("Everyone declined your trade request.", "warning");
+        playGameSound("error");
     } else if (
         request.status === "cancelled" &&
         handledOutgoingTradeResultId !== outgoingTradeId
@@ -2752,6 +3091,7 @@ async function acceptTradeRequest(tradeId) {
             `Trade with ${request.senderName} completed!`,
             "success"
         );
+        playGameSound("success");
 
         renderGame();
 
@@ -2813,6 +3153,7 @@ async function denyTradeRequest(tradeId) {
         }
 
         SendLocalToast("Trade request denied.", "info");
+        playGameSound("click");
 
     } catch (error) {
         console.error("Deny trade failed:", error);
@@ -3001,6 +3342,7 @@ function subscribeToRoomUpdates() {
       return;
     }
 
+    playRemoteGameSound(state, next);
     state = next;
     renderGame();
   });
@@ -3044,6 +3386,7 @@ function beginOpeningPlacements() {
     return SendLocalToast("At least two players are needed to begin.");
   }
 
+  playGameSound("turn");
   state.phase = "setup";
 
   const forward = state.players.map(player => player.id);
@@ -3249,6 +3592,28 @@ getElementById("incomingTrades").addEventListener("click", event => {
 
   bootGamePage();
 }
+
+const soundToggleButton = getElementById("soundToggleBtn");
+if (soundToggleButton) {
+  updateSoundToggle();
+  soundToggleButton.addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    try {
+      localStorage.setItem(SOUND_PREFERENCE_KEY, String(soundEnabled));
+    } catch (error) {
+      console.warn("Could not save the sound preference:", error);
+    }
+    updateSoundToggle();
+    if (soundEnabled) playGameSound("success");
+  });
+}
+
+document.addEventListener("click", event => {
+  if (!getElementById("board")) return;
+  const button = event.target.closest("button");
+  if (!button || button.disabled || button.id === "soundToggleBtn") return;
+  playGameSound("click");
+});
 
 // ---------------------------------------------------------------------------
 // GAME BOOT
