@@ -1256,22 +1256,44 @@ function updateStatus() {
     !isPlayersTurn() || !state.rolled || state.robberMovePending;
 
   const player = getLocalPlayer();
-  document.querySelectorAll(".modeBtn").forEach(modeButton => {
+  const modeButtons = [...document.querySelectorAll(".modeBtn")];
+  const isModeButtonDisabled = modeButton => {
     const btnmode = modeButton.dataset.mode;
 
     if (state.phase === "setup") {
-      modeButton.disabled =
-        !isPlayersTurn() || btnmode !== state.setupStep;
-    } else {
-      modeButton.disabled =
-        btnmode !== "select" &&
-        (!isPlayersTurn() ||
-          state.phase !== "play" ||
-          !state.rolled ||
-          state.robberMovePending ||
-          !player ||
-          !hasResourcesNeeded(player, BUILDING_COSTS[btnmode]));
+      return btnmode !== "select" &&
+        (!isPlayersTurn() || btnmode !== state.setupStep);
     }
+
+    return btnmode !== "select" &&
+      (!isPlayersTurn() ||
+        state.phase !== "play" ||
+        !state.rolled ||
+        state.robberMovePending ||
+        !player ||
+        !hasResourcesNeeded(player, BUILDING_COSTS[btnmode]));
+  };
+
+  const selectedModeButton = modeButtons.find(
+    button =>
+      button.dataset.mode === mode && isModeButtonDisabled(button)
+  );
+  if (selectedModeButton) {
+    const selectButton = modeButtons.find(
+      button => button.dataset.mode === "select"
+    );
+    mode = "select";
+    if (
+      document.activeElement === selectedModeButton &&
+      selectButton
+    ) {
+      selectButton.disabled = false;
+      selectButton.focus();
+    }
+  }
+
+  modeButtons.forEach(modeButton => {
+    modeButton.disabled = isModeButtonDisabled(modeButton);
   });
 }
 
