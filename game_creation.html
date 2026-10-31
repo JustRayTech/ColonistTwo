@@ -51,7 +51,7 @@
 <div>
     <label for="victoryPointsNeeded">Victory Points Needed</label>
     <input
-        type="range"
+        type="number"
         id="victoryPointsNeeded"
         min="5"
         max="15"
@@ -59,6 +59,18 @@
         value="10"
     >
     <div class="slider-labels"></div>
+</div>
+
+<div>
+    <label for="cardDiscardLimit">Resource discard limit</label>
+    <input
+        type="number"
+        id="cardDiscardLimit"
+        min="0"
+        max="20"
+        step="1"
+        value="7"
+    >
 </div>
 
     <button id="createBtn">

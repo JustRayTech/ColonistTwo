@@ -97,6 +97,7 @@ let handledOutgoingTradeResultId = null;
 let localToastTimer = null;
 let globalToastTimer = null;
 let lastGlobalToastId = null;
+let discardSelection = {};
 let soundEnabled = true;
 let gameAudioContext = null;
 const SOUND_PREFERENCE_KEY = "colonistsSoundEnabled";
@@ -903,6 +904,11 @@ function createNewGameState(code, name, config = {}) {
     5,
     Math.min(15, Number(config.victoryPointsNeeded) || 10)
   );
+  const configuredDiscardLimit = Number(config.cardDiscardLimit ?? 7);
+  const cardDiscardLimit = Math.floor(Math.max(
+    0,
+    Math.min(20, Number.isFinite(configuredDiscardLimit) ? configuredDiscardLimit : 7)
+  ));
 
   const board = createBoard(mapSize);
 
@@ -934,6 +940,7 @@ function createNewGameState(code, name, config = {}) {
     maxPlayers,
     mapSize,
     victoryPointsNeeded,
+    cardDiscardLimit,
     turn: 0,
     phase: "lobby",
     setupOrder: [],
@@ -949,6 +956,7 @@ function createNewGameState(code, name, config = {}) {
       board.cells.find(cell => cell.terrain === "desert") || board.cells[0]
     ),
     robberMovePending: false,
+    robberDiscards: {},
     roads: {},
     buildings: {},
     logs: [`${player.name} founded room ${code}.`],
@@ -970,6 +978,9 @@ function normalizeRoomState(s) {
   if (!Number.isFinite(s.victoryPointsNeeded)) {
     s.victoryPointsNeeded = 10;
   }
+  s.cardDiscardLimit = Number.isFinite(s.cardDiscardLimit)
+    ? Math.floor(Math.max(0, Math.min(20, s.cardDiscardLimit)))
+    : 7;
 
   s.players = Array.isArray(s.players)
     ? s.players
@@ -996,6 +1007,10 @@ function normalizeRoomState(s) {
   if (typeof s.robberMovePending !== "boolean") {
     s.robberMovePending = false;
   }
+  s.robberDiscards = s.robberDiscards &&
+    typeof s.robberDiscards === "object"
+      ? s.robberDiscards
+      : {};
   if (!Array.isArray(s.resourceHighlightHexIds)) {
     s.resourceHighlightHexIds = [];
   }
@@ -1099,6 +1114,11 @@ function notify(message) {
 // STATUS AND RENDERING
 // ---------------------------------------------------------------------------
 
+function getPendingRobberDiscards() {
+  return Object.entries(state?.robberDiscards || {})
+    .filter(([, count]) => Number.isInteger(Number(count)) && Number(count) > 0);
+}
+
 var previousPlr = 1;
 function updateStatus() {
   if (!state) return;
@@ -1190,6 +1210,13 @@ function updateStatus() {
       active?.id === currentPlayerId
         ? `Opening placement ${state.setupIndex + 1}/${state.setupOrder.length} · Your turn to ${action}`
         : `Opening placement ${state.setupIndex + 1}/${state.setupOrder.length} · ${active?.name} to ${action}`;
+  } else if (state.robberMovePending && getPendingRobberDiscards().length) {
+    const localDiscardCount = Number(state.robberDiscards[currentPlayerId]) || 0;
+    const waitingCount = getPendingRobberDiscards().length;
+
+    getElementById("turnText").textContent = localDiscardCount
+      ? `Discard ${localDiscardCount} resource${localDiscardCount === 1 ? "" : "s"} after the 7`
+      : `Waiting for ${waitingCount} player${waitingCount === 1 ? "" : "s"} to discard`;
   } else if (state.robberMovePending) {
     SendLocalToast("You rolled a 7! Move the robber to a new hex and steal a resource from an adjacent player.", "info");
 
@@ -1250,8 +1277,17 @@ function updateStatus() {
 
 function renderResourceInventory() {
   const player = getLocalPlayer();
+  const resourceBox = getElementById("resourceBox");
+  const totalCards = player
+    ? RESOURCE_TYPES.reduce((total, resource) => total + player.res[resource], 0)
+    : 0;
+  const overDiscardLimit = !!player && totalCards > state.cardDiscardLimit;
 
-  getElementById("resourceBox").innerHTML = RESOURCE_TYPES.map(resource =>
+  resourceBox.classList.toggle("over-discard-limit", overDiscardLimit);
+  resourceBox.title = overDiscardLimit
+    ? `${totalCards} resource cards — above the ${state.cardDiscardLimit}-card discard limit`
+    : "";
+  resourceBox.innerHTML = RESOURCE_TYPES.map(resource =>
     `<div class="resource"><div class="emoji">${RESOURCE_DETAILS[resource][0]}</div><strong>${player?.res[resource] || 0}</strong><small>${RESOURCE_DETAILS[resource][1]}</small></div>`
   ).join("");
 }
@@ -1260,7 +1296,7 @@ function renderPlayerList() {
   const activeId = getCurrentPlayer()?.id;
 
   getElementById("playersBox").innerHTML = state.players.map(player =>
-    `<div class="player ${player.id === activeId && state.phase !== "lobby" && !state.winner ? "active" : ""}"><span class="dot" style="background:${player.color}"></span><div class="grow"><b>${esc(player.name)} ${player.id === currentPlayerId ? "(you)" : ""}</b><span class="small muted">${player.points} VP · ${Object.values(player.res).reduce((a, b) => a + b, 0)} resources</span></div><b>${player.points}</b></div>`
+    `<div class="player ${player.id === activeId && state.phase !== "lobby" && !state.winner ? "active" : ""}"><span class="dot" style="background:${player.color}"></span><div class="grow"><b>${esc(player.name)} ${player.id === currentPlayerId ? "(you)" : ""}</b><span class="small muted">${player.points} VP · ${Object.values(player.res).reduce((a, b) => a + b, 0)} resources</span></div><b>${player.points}/${state.victoryPointsNeeded}</b></div>`
   ).join("");
 }
 
@@ -1598,7 +1634,11 @@ function renderGameBoard() {
 
   svg.append(piecesLayer);
 
-  if (state.robberMovePending && isPlayersTurn()) {
+  if (
+    state.robberMovePending &&
+    isPlayersTurn() &&
+    getPendingRobberDiscards().length === 0
+  ) {
     const targetsLayer = svgEl("g", { class: "robber-targets" });
     board.cells.forEach(cell => {
       const target = svgEl("polygon", {
@@ -1627,6 +1667,172 @@ function renderGameLog() {
     .join("");
 }
 
+function renderDiscardMenu() {
+  const overlay = getElementById("discardOverlay");
+  const player = getLocalPlayer();
+  const required = Number(state?.robberDiscards?.[currentPlayerId]) || 0;
+
+  if (!overlay || !player || required <= 0) {
+    overlay?.classList.add("hidden");
+    discardSelection = {};
+    return;
+  }
+
+  for (const resource of RESOURCE_TYPES) {
+    discardSelection[resource] = Math.min(
+      player.res[resource],
+      Math.max(0, Number(discardSelection[resource]) || 0)
+    );
+  }
+
+  const selected = RESOURCE_TYPES.reduce(
+    (total, resource) => total + discardSelection[resource],
+    0
+  );
+  const totalCards = RESOURCE_TYPES.reduce(
+    (total, resource) => total + player.res[resource],
+    0
+  );
+
+  overlay.classList.remove("hidden");
+  getElementById("discardInstructions").textContent =
+    `You have ${totalCards} cards, above the ${state.cardDiscardLimit}-card limit. Choose ${required} to discard.`;
+  getElementById("discardOptions").innerHTML = RESOURCE_TYPES.map(resource => `
+    <div class="discard-option">
+      <span>${RESOURCE_DETAILS[resource][0]} ${RESOURCE_DETAILS[resource][1]}
+        <span class="muted">(${player.res[resource]} held)</span>
+      </span>
+      <span class="discard-option-controls">
+        <button type="button"
+                data-discard-resource="${resource}"
+                data-discard-change="-1"
+                aria-label="Discard one fewer ${RESOURCE_DETAILS[resource][1]}"
+                ${discardSelection[resource] <= 0 ? "disabled" : ""}>−</button>
+        <strong>${discardSelection[resource]}</strong>
+        <button type="button"
+                data-discard-resource="${resource}"
+                data-discard-change="1"
+                aria-label="Discard one more ${RESOURCE_DETAILS[resource][1]}"
+                ${discardSelection[resource] >= player.res[resource] || selected >= required ? "disabled" : ""}>+</button>
+      </span>
+    </div>
+  `).join("");
+
+  getElementById("discardSelectionCount").textContent =
+    `${selected} of ${required} selected`;
+  getElementById("confirmDiscardsBtn").disabled =
+    selected !== required || discardSubmissionPending;
+}
+
+function changeDiscardSelection(resource, change) {
+  const player = getLocalPlayer();
+  const required = Number(state?.robberDiscards?.[currentPlayerId]) || 0;
+  if (!player || !RESOURCE_TYPES.includes(resource) || required <= 0) return;
+
+  const current = Number(discardSelection[resource]) || 0;
+  const totalSelected = RESOURCE_TYPES.reduce(
+    (total, type) => total + (Number(discardSelection[type]) || 0),
+    0
+  );
+
+  if (change > 0 && totalSelected >= required) return;
+  discardSelection[resource] = Math.max(
+    0,
+    Math.min(player.res[resource], current + change)
+  );
+  renderDiscardMenu();
+}
+
+let discardSubmissionPending = false;
+async function confirmResourceDiscard() {
+  if (discardSubmissionPending || !state) return;
+
+  const player = getLocalPlayer();
+  const required = Number(state.robberDiscards?.[currentPlayerId]) || 0;
+  const discarded = Object.fromEntries(
+    RESOURCE_TYPES.map(resource => [
+      resource,
+      Number(discardSelection[resource]) || 0
+    ])
+  );
+  const selected = RESOURCE_TYPES.reduce(
+    (total, resource) => total + discarded[resource],
+    0
+  );
+
+  if (!player || required <= 0 || selected !== required ||
+      RESOURCE_TYPES.some(resource => discarded[resource] > player.res[resource])) {
+    return SendLocalToast("Select exactly the required number of cards to discard.", "error");
+  }
+
+  discardSubmissionPending = true;
+  renderDiscardMenu();
+
+  try {
+    if (isOnlineGame) {
+      const result = await firebaseTools.runTransaction(
+        roomDatabaseReference,
+        current => {
+          if (!current) return;
+          current = normalizeRoomState(current);
+
+          const currentPlayer = current.players.find(
+            candidate => candidate.id === currentPlayerId
+          );
+          const currentRequirement =
+            Number(current.robberDiscards[currentPlayerId]) || 0;
+          if (!currentPlayer || currentRequirement !== required) return;
+
+          if (RESOURCE_TYPES.some(resource =>
+            currentPlayer.res[resource] < discarded[resource]
+          )) {
+            return;
+          }
+
+          for (const resource of RESOURCE_TYPES) {
+            currentPlayer.res[resource] -= discarded[resource];
+          }
+
+          delete current.robberDiscards[currentPlayerId];
+          current.logs.push(
+            `${currentPlayer.name} discarded ${required} resource card${required === 1 ? "" : "s"} after a 7.`
+          );
+          current.logs = current.logs.slice(-70);
+          return current;
+        }
+      );
+
+      if (!result.committed) {
+        return SendLocalToast(
+          "Your discard could not be submitted. Please check the latest game state.",
+          "error"
+        );
+      }
+
+      state = normalizeRoomState(result.snapshot.val());
+    } else {
+      for (const resource of RESOURCE_TYPES) {
+        player.res[resource] -= discarded[resource];
+      }
+      delete state.robberDiscards[currentPlayerId];
+      state.logs.push(
+        `${player.name} discarded ${required} resource card${required === 1 ? "" : "s"} after a 7.`
+      );
+      state.logs = state.logs.slice(-70);
+    }
+
+    discardSelection = {};
+    playGameSound("trade");
+    renderGame();
+  } catch (error) {
+    console.error("Failed to submit resource discards:", error);
+    SendLocalToast("Could not submit your discards. Check your connection.", "error");
+  } finally {
+    discardSubmissionPending = false;
+    renderDiscardMenu();
+  }
+}
+
 function renderGame() {
   if (!state) return;
 
@@ -1638,6 +1844,7 @@ function renderGame() {
   renderGameBoard();
   renderGameLog();
   renderIncomingTrades();
+  renderDiscardMenu();
 
   const player = getLocalPlayer();
 
@@ -1647,6 +1854,7 @@ function renderGame() {
   getElementById("devBox").textContent = player?.dev.length
     ? `Development cards: ${player.dev.join(", ")}`
     : "No development cards yet.";
+  getElementById("discardLimitRule").textContent = state.cardDiscardLimit;
 
   document.querySelectorAll(".modeBtn").forEach(button => {
     button.style.borderColor =
@@ -2061,6 +2269,20 @@ function rollDice() {
 
   } else {
     state.robberMovePending = true;
+    state.robberDiscards = {};
+    for (const player of state.players) {
+      const cardCount = RESOURCE_TYPES.reduce(
+        (total, resource) => total + player.res[resource],
+        0
+      );
+      if (cardCount > state.cardDiscardLimit) {
+        const discardCount = Math.floor(cardCount / 2);
+        if (discardCount > 0) {
+          state.robberDiscards[player.id] = discardCount;
+        }
+      }
+    }
+
     const message = `${roller.name} rolled 7 and must move the robber.`;
 
     state.logs.push(message);
@@ -2110,6 +2332,7 @@ function moveRobberToHex(cell) {
   if (
     !state ||
     !state.robberMovePending ||
+    getPendingRobberDiscards().length > 0 ||
     !isPlayersTurn() ||
     state.phase !== "play" ||
     !state.rolled
@@ -2219,7 +2442,7 @@ function showGameRules() {
   alert(
     "COLONISTS — QUICK RULES\n\n" +
     "Turn: roll 2 dice, collect resources, then build/trade.\n\n" +
-    "Robber: rolling a 7 lets you move the robber from the desert to another hex. That hex stops producing resources, and you steal one random resource from an opponent with a settlement or city there.\n\n" +
+    `Robber: rolling a 7 makes each player with more than ${state.cardDiscardLimit} resource cards discard half their cards, rounded down. Once all required discards are complete, move the robber to another hex. That hex stops producing resources, and you steal one random resource from an opponent with a settlement or city there.\n\n` +
     "Costs:\n" +
     "Road: 1 wood + 1 brick\n" +
     "Settlement: 1 wood + 1 brick + 1 wool + 1 grain\n" +
@@ -2889,6 +3112,13 @@ function renderIncomingTrades() {
 async function acceptTradeRequest(tradeId) {
     if (!isOnlineGame || !firebaseTools) return;
 
+    if (state.robberMovePending) {
+        return SendLocalToast(
+            "Resolve the robber action before accepting a trade.",
+            "warning"
+        );
+    }
+
     const tradesRef = firebaseTools.ref(
         database,
         `roomTrades/${state.code}`
@@ -3204,7 +3434,8 @@ function readGameConfig() {
   return {
     maxPlayers: Number(getElementById("maximumPlayers")?.value || 4),
     mapSize: Number(getElementById("mapSize")?.value || 1),
-    victoryPointsNeeded: Number(getElementById("victoryPointsNeeded")?.value || 10)
+    victoryPointsNeeded: Number(getElementById("victoryPointsNeeded")?.value || 10),
+    cardDiscardLimit: Number(getElementById("cardDiscardLimit")?.value ?? 7)
   };
 }
 
@@ -3560,6 +3791,21 @@ getElementById("wantedCards").addEventListener("click", event => {
         Number(button.dataset.tradeChange)
     );
 });
+
+getElementById("discardOptions").addEventListener("click", event => {
+    const button = event.target.closest("[data-discard-resource]");
+    if (!button || button.disabled) return;
+
+    changeDiscardSelection(
+      button.dataset.discardResource,
+      Number(button.dataset.discardChange)
+    );
+});
+
+getElementById("confirmDiscardsBtn").addEventListener(
+    "click",
+    confirmResourceDiscard
+);
 
 // -- // Incoming trade notifications
 

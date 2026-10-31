@@ -139,6 +139,24 @@
 
                     </div>
                 </div>
+
+                <div id="discardOverlay"
+                     class="discard-overlay trade-overlay hidden"
+                     role="dialog"
+                     aria-modal="true"
+                     aria-labelledby="discardTitle">
+                    <div class="discard-panel">
+                        <h3 id="discardTitle">Discard resources</h3>
+                        <p id="discardInstructions"></p>
+                        <div id="discardOptions" class="discard-options"></div>
+                        <div class="discard-footer">
+                            <span id="discardSelectionCount" aria-live="polite"></span>
+                            <button id="confirmDiscardsBtn" disabled>
+                                Discard selected cards
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Build modes -->
@@ -174,7 +192,10 @@
                 the matching build mode before clicking a road edge or
                 intersection. During normal play, settlements must connect to
                 your road network and keep at least one empty intersection
-                between settlements. Coastal ports are generated with the map;
+                between settlements. On a 7, players above the
+                <span id="discardLimitRule">7</span>-card discard limit must
+                discard half their resource cards, rounded down, before the
+                robber can move. Coastal ports are generated with the map;
                 place a settlement on either connected coastal intersection
                 to unlock that port's trade rate.
             </p>
